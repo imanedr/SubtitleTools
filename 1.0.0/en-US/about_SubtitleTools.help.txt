@@ -1,0 +1,175 @@
+TOPIC
+    about_SubtitleTools
+
+SHORT DESCRIPTION
+    A comprehensive toolkit for SRT and ASS/SSA subtitle files: parse, validate,
+    repair, timestamp manipulation, format conversion, and AI-powered translation.
+
+LONG DESCRIPTION
+    SubtitleTools is a PowerShell module that covers the full subtitle lifecycle.
+    It can read and write SRT and ASS/SSA files with full round-trip fidelity,
+    detect and repair common problems, shift or stretch timestamps, convert between
+    formats, and translate subtitles using the OpenAI, Anthropic, or Google AI APIs.
+
+    All timestamp arithmetic uses [TimeSpan] internally. Format-specific string
+    conversion (SRT: HH:mm:ss,fff; ASS: H:mm:ss.cc) happens automatically at
+    parse and write boundaries, so all functions work uniformly regardless of the
+    source format.
+
+    API keys are encrypted with Windows DPAPI and stored per-user in
+    %APPDATA%\SubtitleTools\ — no external vault or password prompt is required.
+
+
+  THE SubtitleFile OBJECT
+
+    Most functions accept and return a SubtitleFile object:
+
+        $sub = Import-SubtitleFile 'anime.ass'
+
+        $sub.Format          # 'SRT' or 'ASS'
+        $sub.Encoding        # detected encoding string, e.g. 'UTF-8'
+        $sub.HasBom          # $true / $false
+        $sub.Entries.Count   # number of dialogue entries
+        $sub.Entries[0].Start   # [TimeSpan] start time
+        $sub.Entries[0].End     # [TimeSpan] end time
+        $sub.Entries[0].Lines   # [string[]] text lines
+        $sub.Header.Styles      # [AssStyle[]] (ASS files only)
+
+    Functions are designed to chain in a pipeline:
+
+        Import-SubtitleFile 'raw.srt' |
+            Repair-SubtitleOverlap -Strategy Trim |
+            Add-SubtitleOffset -Seconds -0.5 |
+            Optimize-SubtitleFile |
+            Export-SubtitleFile -Path 'clean.srt'
+
+
+  FUNCTION CATEGORIES
+
+    CORE I/O
+        Import-SubtitleFile     Auto-detect format and encoding; return SubtitleFile
+        Export-SubtitleFile     Write SubtitleFile to disk (UTF-8 no-BOM default)
+        ConvertFrom-SrtFile     Parse SRT string or file to SrtEntry[]
+        ConvertTo-SrtFile       Serialize SubtitleFile to SRT string
+        ConvertFrom-AssFile     Parse ASS/SSA string or file to SubtitleFile
+        ConvertTo-AssFile       Serialize SubtitleFile to ASS string
+
+    VALIDATION
+        Test-SrtFile            Validate block structure, timestamps, and text
+        Test-AssFile            Validate sections, styles, and column counts
+        Test-SubtitleTimestamps Check that end > start for every entry
+        Test-SubtitleOverlap    Detect entries that start before the previous ends
+
+    REPAIR
+        Repair-SrtFile          Renumber, normalize delimiters, remove BOM
+        Repair-AssFile          Add missing sections, close unclosed override tags
+        Repair-SubtitleEncoding Re-encode file to UTF-8 without BOM
+        Repair-SubtitleOverlap  Resolve overlaps: Trim, Shift, or Drop strategy
+        Repair-SubtitleNumbering Renumber SRT block numbers sequentially from 1
+
+    TIMESTAMPS
+        Add-SubtitleOffset      Shift all (or a range of) entries by a time delta
+        Set-SubtitleOffset      Anchor an entry's start time; shift all others
+        Get-SubtitleDuration    Return duration statistics (total, average, etc.)
+        Set-SubtitleDuration    Clamp or extend entry durations to min/max bounds
+        Invoke-SubtitleStretch  Two-point linear stretch to correct A/V drift
+        Merge-SubtitleFile      Interleave two files sorted by start time
+        Split-SubtitleFile      Split by timestamp or chunk size
+
+    ASS / SSA ADVANCED
+        Get-AssStyle            List all or a named style from an ASS file
+        Set-AssStyle            Update style properties (font, size, colors, etc.)
+        New-AssStyle            Create a new style and optionally add it to a file
+        Remove-AssStyle         Remove a style; reassigns entries to Default
+        Remove-AssOverrideTag   Strip {\...} tags (all or by regex pattern)
+        Convert-AssToPlainText  Strip all tags; convert \N to newlines
+        Convert-AssToSrt        Convert ASS to SRT format
+        Convert-SrtToAss        Convert SRT to ASS format
+
+    AI TRANSLATION
+        Set-TranslationProvider Configure a provider and store its encrypted API key
+        Get-TranslationProvider List configured providers and key status
+        Remove-TranslationProvider Remove a saved provider
+        New-TranslationSession  Create a reusable session (provider, glossary, cache)
+        Invoke-SubtitleTranslation Translate a file; batch, cache, rate-limit, resume
+        Invoke-BackTranslation  Re-translate to source language; flag low similarity
+        Get-TranslationGlossary Read a glossary JSON file
+        Add-TranslationGlossaryEntry Add or update a glossary term
+        Remove-TranslationGlossaryEntry Remove glossary terms by name or wildcard
+        Set-SubtitleLineWidth   Wrap lines to max characters and max line count
+
+    BATCH & UTILITIES
+        Get-SubtitleInfo        One-line summary: format, entry count, timing, overlaps
+        Find-SubtitleFile       Recursive search filtered by format and filename pattern
+        Compare-SubtitleFile    Side-by-side diff of two files (timestamps + text)
+        Optimize-SubtitleFile   Sort, deduplicate, trim whitespace, normalize Unicode
+        Invoke-SubtitleBatch    Apply a scriptblock to all files in a directory tree
+
+    SHARING
+        Publish-SubtitleFile    Upload subtitle to SubDL
+        Set-SubDLCredential     Store SubDL API token (DPAPI-encrypted)
+        Get-SubDLCredential     Check whether a SubDL token is stored
+        Remove-SubDLCredential  Delete the stored SubDL token
+
+
+  STORAGE LOCATIONS
+
+    Provider config and encrypted API keys:
+        %APPDATA%\SubtitleTools\providers.json
+
+    SubDL API token:
+        %APPDATA%\SubtitleTools\subdl.json
+
+    Encryption: Windows DPAPI, CurrentUser scope. Files cannot be decrypted
+    on a different machine or by a different Windows account.
+
+
+  NOTE
+
+    API key encryption relies on Windows DPAPI. This means the translation and
+    sharing features require Windows. Core parsing, validation, repair, timestamp,
+    and conversion functions work on any platform that supports PowerShell 5.1+
+    or PowerShell 7+.
+
+
+EXAMPLES
+
+    Validate and repair an SRT file:
+
+        $result = Test-SrtFile -Path 'movie.srt'
+        if (-not $result.IsValid) {
+            Repair-SrtFile -Path 'movie.srt' -OutputPath 'movie_fixed.srt'
+        }
+
+    Correct A/V drift with two reference points:
+
+        Import-SubtitleFile 'drifting.srt' |
+            Invoke-SubtitleStretch `
+                -SourcePoint1 '01:00:00' -TargetPoint1 '01:00:02' `
+                -SourcePoint2 '01:30:00' -TargetPoint2 '01:30:09' |
+            Export-SubtitleFile -Path 'synced.srt'
+
+    Translate a film to Persian with content-aware priming:
+
+        Set-TranslationProvider -Name Anthropic -Model 'claude-3-5-sonnet-latest' `
+            -ApiKeyPlainText 'sk-ant-...'
+
+        Invoke-SubtitleTranslation `
+            -Path 'movie.srt' `
+            -ProviderName Anthropic `
+            -TargetLanguage 'fa' `
+            -PrimeWithContext `
+            -OutputPath 'movie.fa.srt'
+
+    Batch fix encoding across an entire movie library:
+
+        Invoke-SubtitleBatch -Path 'D:\Movies' -Recurse -Format SRT -ScriptBlock {
+            $_ | Repair-SubtitleEncoding
+        }
+
+
+SEE ALSO
+    Get-Help Import-SubtitleFile -Full
+    Get-Help Invoke-SubtitleTranslation -Full
+    Get-Help Invoke-SubtitleBatch -Full
+    https://github.com/imanedr/SubtitleTools

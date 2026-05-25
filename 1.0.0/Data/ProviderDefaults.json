@@ -1,0 +1,23 @@
+{
+  "OpenAI": {
+    "Model": "gpt-4o",
+    "BaseUrl": "https://api.openai.com/v1",
+    "RateLimitRpm": 60,
+    "MaxTokensPerBatch": 4000,
+    "Temperature": 0.3
+  },
+  "Anthropic": {
+    "Model": "claude-sonnet-4-6",
+    "BaseUrl": "https://api.anthropic.com/v1",
+    "RateLimitRpm": 60,
+    "MaxTokensPerBatch": 4000,
+    "Temperature": 0.3
+  },
+  "Google": {
+    "Model": "gemini-flash-latest",
+    "BaseUrl": "https://generativelanguage.googleapis.com/v1beta",
+    "RateLimitRpm": 60,
+    "MaxTokensPerBatch": 8000,
+    "Temperature": 0.3
+  }
+}
