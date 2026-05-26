@@ -71,10 +71,16 @@
             continue
         }
 
-        # Remaining lines are subtitle text
-        $textLines     = $lines[($timeLineIndex + 1)..($lines.Count - 1)] | ForEach-Object { $_.TrimEnd() }
-        $entry.Lines   = $textLines
-        $entry.RawText = $textLines -join [System.Environment]::NewLine
+        # Remaining lines are subtitle text. Guard against a reverse range
+        # (e.g. $lines[2..1]) when the block has no text lines.
+        if (($timeLineIndex + 1) -lt $lines.Count) {
+            $textLines     = @($lines[($timeLineIndex + 1)..($lines.Count - 1)] | ForEach-Object { $_.TrimEnd() })
+            $entry.Lines   = $textLines
+            $entry.RawText = $textLines -join [System.Environment]::NewLine
+        } else {
+            $entry.Lines   = @()
+            $entry.RawText = ''
+        }
 
         # Detect HTML tags
         if ($entry.RawText -match '<(b|i|u|font)\b') {
