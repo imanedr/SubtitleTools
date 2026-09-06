@@ -24,7 +24,11 @@ function Remove-TranslationGlossaryEntry {
         throw "Glossary file not found: '$Path'"
     }
 
-    $existing = Get-Content $Path -Raw | ConvertFrom-Json -AsHashtable
+    $existingObj = Get-Content $Path -Raw | ConvertFrom-Json
+    $existing    = @{}
+    foreach ($propName in ($existingObj | Get-Member -MemberType NoteProperty -ErrorAction SilentlyContinue).Name) {
+        $existing[$propName] = $existingObj.$propName
+    }
     $toRemove = $existing.Keys | Where-Object { $_ -like $SourceTerm }
 
     if ($toRemove.Count -eq 0) {

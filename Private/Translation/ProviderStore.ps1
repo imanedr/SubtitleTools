@@ -7,6 +7,10 @@ function Protect-ApiKey {
     #>
     param([Parameter(Mandatory)][string] $PlainText)
 
+    if (-not ((-not (Test-Path Variable:\IsWindows)) -or $IsWindows)) {
+        throw 'Storing translation provider API keys requires Windows: encrypted credential storage uses the Windows Data Protection API (DPAPI), which is not available on this platform.'
+    }
+
     Add-Type -AssemblyName System.Security
     $bytes     = [System.Text.Encoding]::UTF8.GetBytes($PlainText)
     $encrypted = [System.Security.Cryptography.ProtectedData]::Protect($bytes, $null, 'CurrentUser')
@@ -19,6 +23,10 @@ function Unprotect-ApiKey {
         Decrypts a DPAPI-encrypted base64 API key back to plain text.
     #>
     param([Parameter(Mandatory)][string] $EncryptedBase64)
+
+    if (-not ((-not (Test-Path Variable:\IsWindows)) -or $IsWindows)) {
+        throw 'Reading translation provider API keys requires Windows: encrypted credential storage uses the Windows Data Protection API (DPAPI), which is not available on this platform.'
+    }
 
     Add-Type -AssemblyName System.Security
     $bytes     = [Convert]::FromBase64String($EncryptedBase64)

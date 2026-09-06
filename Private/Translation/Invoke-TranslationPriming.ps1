@@ -101,16 +101,16 @@ TRANSLATION_WARNINGS: <any structural challenges (e.g., wordplay, acrostics, num
     }
 
     $result = [PSCustomObject]@{
-        ContentType          = $ctx['CONTENT_TYPE']          ?? 'unknown'
-        ContentTitle         = $ctx['CONTENT_TITLE']         ?? 'UNKNOWN'
-        DominantTone         = $ctx['DOMINANT_TONE']         ?? 'neutral'
-        Register             = $ctx['REGISTER']              ?? 'mixed'
-        TargetAudience       = $ctx['TARGET_AUDIENCE']       ?? 'general'
-        Pacing               = $ctx['PACING']                ?? 'moderate'
-        DomainTerms          = $ctx['DOMAIN_TERMS']          ?? 'NONE'
-        SpeakerPatterns      = $ctx['SPEAKER_PATTERNS']      ?? ''
-        CulturalNotes        = $ctx['CULTURAL_NOTES']        ?? 'NONE'
-        TranslationWarnings  = $ctx['TRANSLATION_WARNINGS']  ?? 'NONE'
+        ContentType          = if ($ctx.ContainsKey('CONTENT_TYPE'))         { $ctx['CONTENT_TYPE'] }         else { 'unknown'  }
+        ContentTitle         = if ($ctx.ContainsKey('CONTENT_TITLE'))        { $ctx['CONTENT_TITLE'] }        else { 'UNKNOWN'  }
+        DominantTone         = if ($ctx.ContainsKey('DOMINANT_TONE'))        { $ctx['DOMINANT_TONE'] }        else { 'neutral'  }
+        Register             = if ($ctx.ContainsKey('REGISTER'))             { $ctx['REGISTER'] }             else { 'mixed'    }
+        TargetAudience       = if ($ctx.ContainsKey('TARGET_AUDIENCE'))      { $ctx['TARGET_AUDIENCE'] }      else { 'general'  }
+        Pacing               = if ($ctx.ContainsKey('PACING'))               { $ctx['PACING'] }               else { 'moderate' }
+        DomainTerms          = if ($ctx.ContainsKey('DOMAIN_TERMS'))         { $ctx['DOMAIN_TERMS'] }         else { 'NONE'     }
+        SpeakerPatterns      = if ($ctx.ContainsKey('SPEAKER_PATTERNS'))     { $ctx['SPEAKER_PATTERNS'] }     else { ''         }
+        CulturalNotes        = if ($ctx.ContainsKey('CULTURAL_NOTES'))       { $ctx['CULTURAL_NOTES'] }       else { 'NONE'     }
+        TranslationWarnings  = if ($ctx.ContainsKey('TRANSLATION_WARNINGS')) { $ctx['TRANSLATION_WARNINGS'] } else { 'NONE'     }
         RawAnalysis          = $adapterResult.Content
     }
 

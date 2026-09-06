@@ -35,9 +35,9 @@ function Add-TranslationGlossaryEntry {
     $glossary = @{}
 
     if (Test-Path $Path) {
-        $existing = Get-Content $Path -Raw | ConvertFrom-Json -AsHashtable
-        foreach ($key in $existing.Keys) {
-            $glossary[$key] = $existing[$key]
+        $existingObj = Get-Content $Path -Raw | ConvertFrom-Json
+        foreach ($propName in ($existingObj | Get-Member -MemberType NoteProperty -ErrorAction SilentlyContinue).Name) {
+            $glossary[$propName] = $existingObj.$propName
         }
     }
 

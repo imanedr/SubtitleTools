@@ -26,7 +26,11 @@ function Get-TranslationGlossary {
         throw "Glossary file not found: '$Path'"
     }
 
-    $glossary = Get-Content $Path -Raw | ConvertFrom-Json -AsHashtable
+    $glossaryObj = Get-Content $Path -Raw | ConvertFrom-Json
+    $glossary    = @{}
+    foreach ($propName in ($glossaryObj | Get-Member -MemberType NoteProperty -ErrorAction SilentlyContinue).Name) {
+        $glossary[$propName] = $glossaryObj.$propName
+    }
 
     $entries = $glossary.GetEnumerator() | ForEach-Object {
         [PSCustomObject]@{ SourceTerm = $_.Key; Translation = $_.Value }

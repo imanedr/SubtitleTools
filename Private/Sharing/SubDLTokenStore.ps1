@@ -7,6 +7,10 @@ function Protect-SubDLToken {
     #>
     param([Parameter(Mandatory)][string] $PlainText)
 
+    if (-not ((-not (Test-Path Variable:\IsWindows)) -or $IsWindows)) {
+        throw 'Storing the SubDL API token requires Windows: encrypted credential storage uses the Windows Data Protection API (DPAPI), which is not available on this platform.'
+    }
+
     Add-Type -AssemblyName System.Security
     $bytes     = [System.Text.Encoding]::UTF8.GetBytes($PlainText)
     $encrypted = [System.Security.Cryptography.ProtectedData]::Protect($bytes, $null, 'CurrentUser')
@@ -19,6 +23,10 @@ function Unprotect-SubDLToken {
         Decrypts a DPAPI-encrypted base64 SubDL token back to plain text.
     #>
     param([Parameter(Mandatory)][string] $EncryptedBase64)
+
+    if (-not ((-not (Test-Path Variable:\IsWindows)) -or $IsWindows)) {
+        throw 'Reading the SubDL API token requires Windows: encrypted credential storage uses the Windows Data Protection API (DPAPI), which is not available on this platform.'
+    }
 
     Add-Type -AssemblyName System.Security
     $bytes     = [Convert]::FromBase64String($EncryptedBase64)

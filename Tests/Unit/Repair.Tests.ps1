@@ -1,9 +1,9 @@
 #Requires -Modules @{ModuleName='Pester';ModuleVersion='5.0.0'}
 
 BeforeAll {
-    $ModulePath = Join-Path $PSScriptRoot '..\..\SubtitleTools.psd1'
+    $ModulePath = Join-Path (Join-Path $PSScriptRoot '..') (Join-Path '..' 'SubtitleTools.psd1')
     Import-Module $ModulePath -Force
-    $FixturesPath = Join-Path $PSScriptRoot '..\Fixtures'
+    $FixturesPath = Join-Path (Join-Path $PSScriptRoot '..') 'Fixtures'
 }
 
 Describe 'Repair-SubtitleNumbering' {

@@ -34,12 +34,18 @@ function New-TranslationSession {
 
     $glossary = @{}
     if ($GlossaryPath -and (Test-Path $GlossaryPath)) {
-        $glossary = Get-Content $GlossaryPath -Raw | ConvertFrom-Json -AsHashtable
+        $glossaryObj = Get-Content $GlossaryPath -Raw | ConvertFrom-Json
+        foreach ($propName in ($glossaryObj | Get-Member -MemberType NoteProperty -ErrorAction SilentlyContinue).Name) {
+            $glossary[$propName] = $glossaryObj.$propName
+        }
     }
 
     $cache = @{}
     if ($CheckpointPath -and (Test-Path $CheckpointPath)) {
-        $cache = Get-Content $CheckpointPath -Raw | ConvertFrom-Json -AsHashtable
+        $cacheObj = Get-Content $CheckpointPath -Raw | ConvertFrom-Json
+        foreach ($propName in ($cacheObj | Get-Member -MemberType NoteProperty -ErrorAction SilentlyContinue).Name) {
+            $cache[$propName] = $cacheObj.$propName
+        }
         Write-Verbose "Loaded $($cache.Count) cached translations from '$CheckpointPath'."
     }
 

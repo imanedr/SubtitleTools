@@ -226,7 +226,7 @@
                     -TargetLanguage $tgt `
                     -ContentContext $contentCtx `
                     -Glossary       $glossary `
-                    -SystemPromptPath ($promptPath ?? '')
+                    -SystemPromptPath $(if ($promptPath) { $promptPath } else { '' })
 
                 # Numbered format: "1|text\n2|text\n..." — immune to pipe chars in translated text
                 $userContent = (0..($srcTexts.Count - 1) | ForEach-Object { "$($_ + 1)|$($srcTexts[$_])" }) -join "`n"

@@ -254,7 +254,7 @@ class TranslationProvider {
 # ============================================================
 # LOAD PRIVATE FUNCTIONS
 # ============================================================
-$PrivateFiles = Get-ChildItem -Path "$PSScriptRoot\Private" -Recurse -Filter '*.ps1' -ErrorAction SilentlyContinue
+$PrivateFiles = Get-ChildItem -Path (Join-Path $PSScriptRoot 'Private') -Recurse -Filter '*.ps1' -ErrorAction Stop
 
 foreach ($File in $PrivateFiles) {
     . $File.FullName
@@ -263,7 +263,7 @@ foreach ($File in $PrivateFiles) {
 # ============================================================
 # LOAD PUBLIC FUNCTIONS
 # ============================================================
-$PublicFiles = Get-ChildItem -Path "$PSScriptRoot\Public" -Recurse -Filter '*.ps1' -ErrorAction SilentlyContinue
+$PublicFiles = Get-ChildItem -Path (Join-Path $PSScriptRoot 'Public') -Recurse -Filter '*.ps1' -ErrorAction Stop
 
 foreach ($File in $PublicFiles) {
     . $File.FullName
@@ -276,29 +276,50 @@ Export-ModuleMember -Function $ExportNames
 # ============================================================
 # LOAD REFERENCE DATA
 # ============================================================
-$DataPath = "$PSScriptRoot\Data"
+$DataPath = Join-Path $PSScriptRoot 'Data'
 
-if (Test-Path "$DataPath\ProviderDefaults.json") {
-    $script:ProviderDefaults = Get-Content "$DataPath\ProviderDefaults.json" -Raw | ConvertFrom-Json
+$ProviderDefaultsPath   = Join-Path $DataPath 'ProviderDefaults.json'
+$LanguageCodesPath      = Join-Path $DataPath 'LanguageCodes.json'
+$DefaultAssStylesPath   = Join-Path $DataPath 'DefaultAssStyles.json'
+$SubDLLanguagesPath     = Join-Path $DataPath 'SubDLLanguages.json'
+
+if (Test-Path $ProviderDefaultsPath) {
+    $script:ProviderDefaults = Get-Content $ProviderDefaultsPath -Raw | ConvertFrom-Json
 }
-if (Test-Path "$DataPath\LanguageCodes.json") {
-    $script:LanguageCodes = Get-Content "$DataPath\LanguageCodes.json" -Raw | ConvertFrom-Json
+if (Test-Path $LanguageCodesPath) {
+    $script:LanguageCodes = Get-Content $LanguageCodesPath -Raw | ConvertFrom-Json
 }
-if (Test-Path "$DataPath\DefaultAssStyles.json") {
-    $script:DefaultAssStyles = Get-Content "$DataPath\DefaultAssStyles.json" -Raw | ConvertFrom-Json
+if (Test-Path $DefaultAssStylesPath) {
+    $script:DefaultAssStyles = Get-Content $DefaultAssStylesPath -Raw | ConvertFrom-Json
 }
-if (Test-Path "$DataPath\SubDLLanguages.json") {
-    $script:SubDLLanguages = Get-Content "$DataPath\SubDLLanguages.json" -Raw | ConvertFrom-Json
+if (Test-Path $SubDLLanguagesPath) {
+    $script:SubDLLanguages = Get-Content $SubDLLanguagesPath -Raw | ConvertFrom-Json
 }
+
+# ============================================================
+# CROSS-PLATFORM CONFIG ROOT
+# Windows: %APPDATA%\SubtitleTools (unchanged, so existing users'
+# saved providers/tokens keep working). Non-Windows: XDG_CONFIG_HOME
+# (or ~/.config as fallback) \SubtitleTools.
+# ============================================================
+$IsWindowsPlatform = (-not (Test-Path Variable:\IsWindows)) -or $IsWindows
+if ($IsWindowsPlatform) {
+    $ConfigRoot = $env:APPDATA
+} elseif ($env:XDG_CONFIG_HOME) {
+    $ConfigRoot = $env:XDG_CONFIG_HOME
+} else {
+    $ConfigRoot = Join-Path $HOME '.config'
+}
+$script:ConfigRoot = Join-Path $ConfigRoot 'SubtitleTools'
 
 # Module-scope storage for configured translation providers
 $script:ConfiguredProviders = @{}
 $script:DefaultProvider     = $null
-$script:ProvidersFilePath   = Join-Path $env:APPDATA 'SubtitleTools\providers.json'
+$script:ProvidersFilePath   = Join-Path $script:ConfigRoot 'providers.json'
 
 # Module-scope SubDL token store
 $script:SubDLTokenEncrypted = $null
-$script:SubDLTokenStorePath = Join-Path $env:APPDATA 'SubtitleTools\subdl.json'
+$script:SubDLTokenStorePath = Join-Path $script:ConfigRoot 'subdl.json'
 
 # Load persisted providers on module import
 if (Test-Path $script:ProvidersFilePath) {
