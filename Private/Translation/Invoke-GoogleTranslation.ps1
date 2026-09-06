@@ -35,7 +35,8 @@ function Invoke-GoogleTranslation {
             }
         )
         generationConfig  = @{
-            temperature = [double]$Provider.Temperature
+            temperature     = [double]$Provider.Temperature
+            maxOutputTokens = $Provider.MaxOutputTokens
         }
     } | ConvertTo-Json -Depth 8
 

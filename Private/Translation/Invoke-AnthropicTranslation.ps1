@@ -26,7 +26,7 @@ function Invoke-AnthropicTranslation {
 
     $body = @{
         model      = $Provider.Model
-        max_tokens = 8192
+        max_tokens = $Provider.MaxOutputTokens
         system     = $SystemPrompt
         messages   = @(
             @{ role = 'user'; content = $UserContent }

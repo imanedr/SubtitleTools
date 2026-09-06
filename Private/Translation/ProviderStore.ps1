@@ -53,6 +53,7 @@ function Save-ProviderStore {
             BaseUrl           = $p.BaseUrl
             RateLimitRpm      = $p.RateLimitRpm
             MaxTokensPerBatch = $p.MaxTokensPerBatch
+            MaxOutputTokens   = $p.MaxOutputTokens
             Temperature       = $p.Temperature
             ApiKeyEncrypted   = $p.ApiKeyEncrypted
         }

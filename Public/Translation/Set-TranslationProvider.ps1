@@ -21,7 +21,13 @@ function Set-TranslationProvider {
     .PARAMETER RateLimitRpm
         Maximum requests per minute.
     .PARAMETER MaxTokensPerBatch
-        Maximum tokens per API call.
+        Client-side input batching budget: how many subtitle entries get packed into one
+        outbound API call, estimated as tokens x ~4 chars/token. This does NOT limit the
+        API's output/response size - see -MaxOutputTokens for that.
+    .PARAMETER MaxOutputTokens
+        Maximum tokens the provider is allowed to generate in its response (sent to the API
+        as e.g. Anthropic's max_tokens). This is the output cap, separate from
+        -MaxTokensPerBatch (which only controls input batching). Default: 8192.
     .PARAMETER Temperature
         Sampling temperature (0.0-1.0).
     .EXAMPLE
@@ -46,10 +52,12 @@ function Set-TranslationProvider {
         [string]      $BaseUrl,
         [int]         $RateLimitRpm,
         [int]         $MaxTokensPerBatch,
+        [int]         $MaxOutputTokens,
         [decimal]     $Temperature
     )
 
-    $isUpdate = $PSBoundParameters.Count -gt 1  # more than just -Name
+    $configParams = 'Model','ApiKeyPlainText','ApiKey','BaseUrl','RateLimitRpm','MaxTokensPerBatch','Temperature','MaxOutputTokens'
+    $isUpdate = @($configParams | Where-Object { $PSBoundParameters.ContainsKey($_) }).Count -gt 0
 
     if ($isUpdate) {
         # Load existing saved config, or seed from defaults for a new provider
@@ -64,6 +72,7 @@ function Set-TranslationProvider {
             $provider.BaseUrl            = $d.BaseUrl
             $provider.RateLimitRpm       = $d.RateLimitRpm
             $provider.MaxTokensPerBatch  = $d.MaxTokensPerBatch
+            $provider.MaxOutputTokens    = if ($d.MaxOutputTokens) { $d.MaxOutputTokens } else { 8192 }
             $provider.Temperature        = $d.Temperature
         }
 
@@ -72,6 +81,7 @@ function Set-TranslationProvider {
         if ($PSBoundParameters.ContainsKey('BaseUrl'))           { $provider.BaseUrl           = $BaseUrl }
         if ($PSBoundParameters.ContainsKey('RateLimitRpm'))      { $provider.RateLimitRpm      = $RateLimitRpm }
         if ($PSBoundParameters.ContainsKey('MaxTokensPerBatch')) { $provider.MaxTokensPerBatch = $MaxTokensPerBatch }
+        if ($PSBoundParameters.ContainsKey('MaxOutputTokens'))   { $provider.MaxOutputTokens   = $MaxOutputTokens }
         if ($PSBoundParameters.ContainsKey('Temperature'))       { $provider.Temperature       = $Temperature }
 
         # Encrypt and store API key if supplied

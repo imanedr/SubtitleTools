@@ -27,6 +27,7 @@ function Invoke-OpenAITranslation {
     $body = @{
         model       = $Provider.Model
         temperature = [double]$Provider.Temperature
+        max_tokens  = $Provider.MaxOutputTokens
         messages    = @(
             @{ role = 'system'; content = $SystemPrompt }
             @{ role = 'user';   content = $UserContent  }

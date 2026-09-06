@@ -78,6 +78,7 @@ TRANSLATION_WARNINGS: <any structural challenges (e.g., wordplay, acrostics, num
     $analysisProv.Model    = $provider.Model
     $analysisProv.BaseUrl  = $provider.BaseUrl
     $analysisProv.MaxTokensPerBatch = $provider.MaxTokensPerBatch
+    $analysisProv.MaxOutputTokens   = $provider.MaxOutputTokens
     $analysisProv.RateLimitRpm      = $provider.RateLimitRpm
     $analysisProv.Temperature       = 0.7
 

@@ -30,6 +30,7 @@ function Get-TranslationProvider {
             BaseUrl           = $provider.BaseUrl
             RateLimitRpm      = $provider.RateLimitRpm
             MaxTokensPerBatch = $provider.MaxTokensPerBatch
+            MaxOutputTokens   = $provider.MaxOutputTokens
             Temperature       = $provider.Temperature
             IsDefault         = ($provider.Name -eq $script:DefaultProvider)
         }
