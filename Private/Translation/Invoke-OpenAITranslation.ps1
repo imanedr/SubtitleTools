@@ -3,7 +3,7 @@ function Invoke-OpenAITranslation {
     .SYNOPSIS
         Calls the OpenAI Chat Completions API with retry and exponential backoff.
     .OUTPUTS
-        PSCustomObject: Content, InputTokens, OutputTokens, FinishReason, Model
+        PSCustomObject: Content, InputTokens, OutputTokens, FinishReason, Model, RetryCount
     #>
     [OutputType([PSCustomObject])]
     param(
@@ -32,41 +32,35 @@ function Invoke-OpenAITranslation {
             @{ role = 'system'; content = $SystemPrompt }
             @{ role = 'user';   content = $UserContent  }
         )
-    } | ConvertTo-Json -Depth 5
+    }
 
     $headers = @{
         'Authorization' = "Bearer $plainKey"
-        'Content-Type'  = 'application/json'
     }
 
-    $attempt = 0
-    while ($attempt -lt $MaxRetries) {
-        try {
-            $response = Invoke-RestMethod -Uri "$($Provider.BaseUrl)/chat/completions" `
-                -Method Post -Headers $headers -Body $body -ErrorAction Stop
+    $result = Invoke-TranslationApiRequest -Uri "$($Provider.BaseUrl)/chat/completions" -Method Post `
+        -Body $body -Headers $headers -ProviderLabel 'OpenAI' -MaxRetries $MaxRetries -JsonDepth 5
 
-            $choice = $response.choices[0]
-            return [PSCustomObject]@{
-                Content      = $choice.message.content
-                InputTokens  = $response.usage.prompt_tokens
-                OutputTokens = $response.usage.completion_tokens
-                FinishReason = $choice.finish_reason
-                Model        = $response.model
-            }
-        } catch {
-            $attempt++
-            if ($attempt -ge $MaxRetries) {
-                return [PSCustomObject]@{
-                    Content      = $_.Exception.Message
-                    InputTokens  = 0
-                    OutputTokens = 0
-                    FinishReason = 'error'
-                    Model        = $Provider.Model
-                }
-            }
-            $delay = [Math]::Pow(2, $attempt)
-            Write-Warning "OpenAI API call failed (attempt $attempt/$MaxRetries). Retrying in ${delay}s..."
-            Start-Sleep -Seconds $delay
+    if (-not $result.Success) {
+        return [PSCustomObject]@{
+            Content      = $result.ErrorMessage
+            InputTokens  = 0
+            OutputTokens = 0
+            FinishReason = 'error'
+            Model        = $Provider.Model
+            RetryCount   = $result.RetryCount
         }
+    }
+
+    $response = $result.Response
+    $choice   = $response.choices[0]
+
+    return [PSCustomObject]@{
+        Content      = $choice.message.content
+        InputTokens  = $response.usage.prompt_tokens
+        OutputTokens = $response.usage.completion_tokens
+        FinishReason = $choice.finish_reason
+        Model        = $response.model
+        RetryCount   = $result.RetryCount
     }
 }

@@ -14,7 +14,9 @@
         batch. Priming runs once per session â€” reuse the same session across episodes
         of a series to avoid repeated API calls.
 
-        Requires SecretManagement for API key storage. Configure a provider first:
+        API keys are stored encrypted at rest via Windows DPAPI (CurrentUser scope) -
+        no SecretManagement vault or external module is required. Configure a
+        provider first:
         Set-TranslationProvider -Name Anthropic -Model 'claude-sonnet-4-6' -ApiKeyPlainText 'sk-ant-...'
 
     .PARAMETER InputObject
@@ -94,7 +96,6 @@
 
         [string] $ResumeFrom,
 
-        [Parameter(Mandatory)]
         [string] $OutputPath,
 
         [string] $LogPath,
@@ -231,11 +232,7 @@
                 # Numbered format: "1|text\n2|text\n..." — immune to pipe chars in translated text
                 $userContent = (0..($srcTexts.Count - 1) | ForEach-Object { "$($_ + 1)|$($srcTexts[$_])" }) -join "`n"
 
-                $adapterResult = switch ($prov.Name) {
-                    'Anthropic' { Invoke-AnthropicTranslation -SystemPrompt $systemPrompt -UserContent $userContent -Provider $prov -ApiKey $key }
-                    'OpenAI'    { Invoke-OpenAITranslation    -SystemPrompt $systemPrompt -UserContent $userContent -Provider $prov -ApiKey $key }
-                    'Google'    { Invoke-GoogleTranslation    -SystemPrompt $systemPrompt -UserContent $userContent -Provider $prov -ApiKey $key }
-                }
+                $adapterResult = Invoke-TranslationProviderAdapter -SystemPrompt $systemPrompt -UserContent $userContent -Provider $prov -ApiKey $key
 
                 if ($adapterResult.FinishReason -eq 'error') {
                     throw "API call failed: $($adapterResult.Content)"

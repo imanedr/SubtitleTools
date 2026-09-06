@@ -3,7 +3,7 @@ function Invoke-GoogleTranslation {
     .SYNOPSIS
         Calls the Google Gemini generateContent API with retry and exponential backoff.
     .OUTPUTS
-        PSCustomObject: Content, InputTokens, OutputTokens, FinishReason, Model
+        PSCustomObject: Content, InputTokens, OutputTokens, FinishReason, Model, RetryCount
     #>
     [OutputType([PSCustomObject])]
     param(
@@ -38,42 +38,67 @@ function Invoke-GoogleTranslation {
             temperature     = [double]$Provider.Temperature
             maxOutputTokens = $Provider.MaxOutputTokens
         }
-    } | ConvertTo-Json -Depth 8
+    }
 
-    $uri = '{0}/models/{1}:generateContent?key={2}' -f $Provider.BaseUrl, $Provider.Model, $plainKey
+    # Auth via header, not '?key=' query string - a plaintext key in the URI can
+    # leak into exception messages, verbose transcripts, and captured error bodies.
+    $headers = @{
+        'x-goog-api-key' = $plainKey
+    }
 
-    $attempt = 0
-    while ($attempt -lt $MaxRetries) {
-        try {
-            $response = Invoke-RestMethod -Uri $uri -Method Post `
-                -ContentType 'application/json' -Body $body -ErrorAction Stop
+    $uri = '{0}/models/{1}:generateContent' -f $Provider.BaseUrl, $Provider.Model
 
-            $text    = $response.candidates[0].content.parts[0].text
-            $inTok   = $response.usageMetadata.promptTokenCount
-            $outTok  = $response.usageMetadata.candidatesTokenCount
-            $finish  = $response.candidates[0].finishReason
+    $result = Invoke-TranslationApiRequest -Uri $uri -Method Post `
+        -Body $body -Headers $headers -ProviderLabel 'Google' -MaxRetries $MaxRetries -JsonDepth 8
 
-            return [PSCustomObject]@{
-                Content      = $text
-                InputTokens  = $inTok
-                OutputTokens = $outTok
-                FinishReason = $finish.ToLower()
-                Model        = $Provider.Model
-            }
-        } catch {
-            $attempt++
-            if ($attempt -ge $MaxRetries) {
-                return [PSCustomObject]@{
-                    Content      = $_.Exception.Message
-                    InputTokens  = 0
-                    OutputTokens = 0
-                    FinishReason = 'error'
-                    Model        = $Provider.Model
-                }
-            }
-            $delay = [Math]::Pow(2, $attempt)
-            Write-Warning "Google API call failed (attempt $attempt/$MaxRetries). Retrying in ${delay}s..."
-            Start-Sleep -Seconds $delay
+    if (-not $result.Success) {
+        return [PSCustomObject]@{
+            Content      = $result.ErrorMessage
+            InputTokens  = 0
+            OutputTokens = 0
+            FinishReason = 'error'
+            Model        = $Provider.Model
+            RetryCount   = $result.RetryCount
         }
+    }
+
+    $response = $result.Response
+
+    # A safety-filtered prompt yields a 200 OK with NO candidates at all (the block
+    # reason lives in promptFeedback.blockReason instead). Calling .ToLower() on the
+    # missing finishReason previously threw *inside* the try, so the generic catch
+    # swallowed it as a retryable failure and eventually returned a raw .NET
+    # exception string as if it were translated text. Surface it as a clear,
+    # non-retryable error instead.
+    if (-not $response.candidates -or $response.candidates.Count -eq 0) {
+        $blockReason = $response.promptFeedback.blockReason
+        $reasonText  = if ($blockReason) { $blockReason } else { 'unknown reason' }
+
+        return [PSCustomObject]@{
+            Content      = "Google Gemini blocked the request (no candidates returned): $reasonText"
+            InputTokens  = $response.usageMetadata.promptTokenCount
+            OutputTokens = 0
+            FinishReason = 'error'
+            Model        = $Provider.Model
+            RetryCount   = $result.RetryCount
+        }
+    }
+
+    $candidate = $response.candidates[0]
+    $text      = $candidate.content.parts[0].text
+    $inTok     = $response.usageMetadata.promptTokenCount
+    $outTok    = $response.usageMetadata.candidatesTokenCount
+    $finish    = $candidate.finishReason
+
+    # Defensive: finishReason can still be null/absent even when candidates exist.
+    $finishLower = if ($finish) { $finish.ToLower() } else { 'unknown' }
+
+    return [PSCustomObject]@{
+        Content      = $text
+        InputTokens  = $inTok
+        OutputTokens = $outTok
+        FinishReason = $finishLower
+        Model        = $Provider.Model
+        RetryCount   = $result.RetryCount
     }
 }

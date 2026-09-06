@@ -82,11 +82,7 @@ TRANSLATION_WARNINGS: <any structural challenges (e.g., wordplay, acrostics, num
     $analysisProv.RateLimitRpm      = $provider.RateLimitRpm
     $analysisProv.Temperature       = 0.7
 
-    $adapterResult = switch ($provider.Name) {
-        'Anthropic' { Invoke-AnthropicTranslation -SystemPrompt $systemPrompt -UserContent $userContent -Provider $analysisProv -ApiKey $ApiKey }
-        'OpenAI'    { Invoke-OpenAITranslation    -SystemPrompt $systemPrompt -UserContent $userContent -Provider $analysisProv -ApiKey $ApiKey }
-        'Google'    { Invoke-GoogleTranslation    -SystemPrompt $systemPrompt -UserContent $userContent -Provider $analysisProv -ApiKey $ApiKey }
-    }
+    $adapterResult = Invoke-TranslationProviderAdapter -SystemPrompt $systemPrompt -UserContent $userContent -Provider $analysisProv -ApiKey $ApiKey
 
     if ($adapterResult.FinishReason -eq 'error') {
         Write-Warning "Translation priming failed: $($adapterResult.Content). Proceeding without content context."
