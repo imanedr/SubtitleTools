@@ -34,6 +34,7 @@ Parse, validate, repair, sync, convert, and AI-translate subtitles — all from 
 - [Requirements](#requirements)
 - [Contributing](#contributing)
 - [License](#license)
+- [Changelog](#changelog)
 
 ---
 
@@ -289,7 +290,7 @@ Provider configs and API keys are saved to `%APPDATA%\SubtitleTools\providers.js
 
 ```powershell
 # First-time setup — save provider config and encrypt API key
-Set-TranslationProvider -Name Anthropic -Model 'claude-3-5-sonnet-latest' -ApiKeyPlainText 'sk-ant-...'
+Set-TranslationProvider -Name Anthropic -Model 'claude-sonnet-5' -ApiKeyPlainText 'sk-ant-...'
 Set-TranslationProvider -Name OpenAI    -Model 'gpt-4o'                    -ApiKeyPlainText 'sk-...'
 Set-TranslationProvider -Name Google    -Model 'gemini-2.0-flash'           -ApiKeyPlainText 'AIza...'
 
@@ -552,3 +553,9 @@ Issues and pull requests are welcome at [github.com/imanedr/SubtitleTools](https
 
 MIT — see [LICENSE](LICENSE) for details.  
 Copyright (c) 2025 Iman Edrisian.
+
+---
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for a full history of notable changes to this project.

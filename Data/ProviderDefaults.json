@@ -8,7 +8,7 @@
     "Temperature": 0.3
   },
   "Anthropic": {
-    "Model": "claude-sonnet-4-6",
+    "Model": "claude-sonnet-5",
     "BaseUrl": "https://api.anthropic.com/v1",
     "RateLimitRpm": 60,
     "MaxTokensPerBatch": 4000,

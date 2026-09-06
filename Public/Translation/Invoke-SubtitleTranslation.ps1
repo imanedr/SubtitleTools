@@ -18,7 +18,7 @@
         API keys are stored encrypted at rest via Windows DPAPI (CurrentUser scope) -
         no SecretManagement vault or external module is required. Configure a
         provider first:
-        Set-TranslationProvider -Name Anthropic -Model 'claude-sonnet-4-6' -ApiKeyPlainText 'sk-ant-...'
+        Set-TranslationProvider -Name Anthropic -Model 'claude-sonnet-5' -ApiKeyPlainText 'sk-ant-...'
 
     .PARAMETER InputObject
         A SubtitleFile object to translate.
@@ -67,7 +67,7 @@
     .PARAMETER WhatIf
         Estimate token usage without calling the API.
     .EXAMPLE
-        Set-TranslationProvider -Name Anthropic -Model 'claude-sonnet-4-6' -ApiKeyPlainText $key
+        Set-TranslationProvider -Name Anthropic -Model 'claude-sonnet-5' -ApiKeyPlainText $key
         Invoke-SubtitleTranslation -Path 'movie.srt' -TargetLanguage 'fa' -ProviderName Anthropic -PrimeWithContext
     .EXAMPLE
         $session = New-TranslationSession -ProviderName OpenAI -GlossaryPath './glossary.json'

@@ -1,7 +1,7 @@
 # SubtitleTools — Module Design & Architecture
 
 **Author:** Iman Edrisian  
-**Version:** 1.0.0  
+**Version:** 1.1.0  
 **Target:** PowerShell 5.1+ (Desktop & Core)
 
 ---
@@ -20,6 +20,7 @@ SubtitleTools/
 ├── SubtitleTools.psm1          # Root loader — classes defined here, functions dot-sourced
 ├── DESIGN.md                   # This file
 ├── README.md                   # User-facing documentation
+├── CHANGELOG.md                # Keep a Changelog-format release history
 │
 ├── Public/                     # Exported functions (visible to module consumers)
 │   ├── Core/                   # I/O: Import, Export, ConvertFrom/To

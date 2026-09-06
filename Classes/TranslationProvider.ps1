@@ -7,7 +7,7 @@ class TranslationProvider {
     [int]      $MaxOutputTokens    # API output-token cap sent to the provider (e.g. Anthropic max_tokens) - distinct from MaxTokensPerBatch
     [int]      $RateLimitRpm       # Requests per minute (0 = unlimited)
     [decimal]  $Temperature
-    [string[]] $SupportedLanguages # Empty means all languages supported
+    [string[]] $SupportedLanguages # Empty means all languages supported; reserved, not currently enforced
 
     TranslationProvider() {
         $this.Temperature        = 0.3

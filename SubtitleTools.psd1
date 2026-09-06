@@ -1,5 +1,5 @@
 @{
-    ModuleVersion        = '1.0.0'
+    ModuleVersion        = '1.1.0'
     GUID                 = 'a3f2e1d0-4b5c-6d7e-8f9a-0b1c2d3e4f50'
     Author               = 'Iman Edrisian'
     Copyright            = '(c) 2025 Iman Edrisian. All rights reserved.'
@@ -87,7 +87,30 @@
                              'Video', 'Encoding', 'Repair', 'Timestamp', 'Batch', 'OpenAI', 'Anthropic', 'Gemini', 'OpenRouter')
             ProjectUri   = 'https://github.com/imanedr/SubtitleTools'
             LicenseUri   = 'https://github.com/imanedr/SubtitleTools/blob/main/LICENSE'
+            # Kept in sync with CHANGELOG.md by hand: PSGallery reads ReleaseNotes,
+            # GitHub readers read CHANGELOG.md. Update both together.
             ReleaseNotes = @'
+Version 1.1.0
+
+- Fixed a PowerShell 5.1 parse error (the ?? operator) that broke Import-Module
+  for the entire module on Windows PowerShell
+- Fixed module loading on Linux/macOS, where backslash paths silently caused
+  zero functions to be exported
+- Fixed Invoke-BackTranslation, which was unusable because -OutputPath was
+  incorrectly mandatory
+- Fixed a Google provider bug that returned a raw .NET exception string as
+  translated subtitle text when a prompt was safety-filtered
+- Added OpenRouter as a fourth translation provider, plus Get-OpenRouterModel
+  to browse its catalogue with context length, output cap, and pricing
+- Added a MaxOutputTokens provider setting, separate from the client-side
+  MaxTokensPerBatch batching heuristic
+- Centralized HTTP request handling across all providers, fixing retry,
+  header, encoding, and error-reporting bugs that previously existed in
+  triplicate
+- Improved translation progress reporting: priming is now a visible phase,
+  token and retry counts are surfaced, nested progress bars no longer clobber
+  each other, and a mid-run failure now saves the checkpoint before failing
+
 Version 1.0.0 — Initial release
 
 - Parse and serialize SRT and ASS/SSA files with full round-trip fidelity
