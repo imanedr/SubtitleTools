@@ -59,14 +59,18 @@ function Invoke-BackTranslation {
     }
 
     Write-Verbose "Back-translating $($TranslatedFile.Entries.Count) entries to '$BackLanguage'..."
-    Write-Progress -Activity 'Back-translation verification' -Status 'Translating...' -PercentComplete 0
+    Write-Progress -Id 1 -Activity 'Back-translation verification' -Status 'Translating...' -PercentComplete 0
 
+    # -ProgressParentId 1 nests Invoke-SubtitleTranslation's own bar (-Id 2, and
+    # its priming phase at -Id 3) beneath this function's bar instead of the two
+    # colliding at the same top-level id.
     $backTranslated = Invoke-SubtitleTranslation `
         -InputObject $TranslatedFile `
         -TargetLanguage $BackLanguage `
-        -Session $Session
+        -Session $Session `
+        -ProgressParentId 1
 
-    Write-Progress -Activity 'Back-translation verification' -Status 'Comparing...' -PercentComplete 80
+    Write-Progress -Id 1 -Activity 'Back-translation verification' -Status 'Comparing...' -PercentComplete 80
 
     $report = [System.Collections.Generic.List[PSCustomObject]]::new()
 
@@ -98,7 +102,7 @@ function Invoke-BackTranslation {
         })
     }
 
-    Write-Progress -Activity 'Back-translation verification' -Completed
+    Write-Progress -Id 1 -Activity 'Back-translation verification' -Completed
 
     $flagged = ($report | Where-Object { $_.Flagged }).Count
     Write-Verbose "Back-translation complete. $flagged / $($report.Count) entries flagged (similarity < $SimilarityThreshold)."

@@ -30,6 +30,11 @@ function Invoke-SubtitleBatch {
         Maximum parallel threads (PowerShell 7+ only). Default: 4.
     .PARAMETER Parallel
         Use ForEach-Object -Parallel (requires PowerShell 7+).
+    .NOTES
+        The sequential per-file progress bar here uses -Id 1. If your -ScriptBlock
+        calls Invoke-SubtitleTranslation, pass -ProgressParentId 1 to it so its
+        progress nests beneath this bar instead of colliding with it; this
+        function cannot inject that itself since the scriptblock is caller-authored.
     .EXAMPLE
         # Fix encoding on all SRT files recursively
         Invoke-SubtitleBatch -Path 'D:\Movies' -Recurse -Format SRT -ScriptBlock {
@@ -106,7 +111,7 @@ function Invoke-SubtitleBatch {
     # Sequential with progress
     foreach ($file in $files) {
         $done++
-        Write-Progress -Activity 'Processing subtitle files' `
+        Write-Progress -Id 1 -Activity 'Processing subtitle files' `
             -Status "$done / $total : $($file.Name)" `
             -PercentComplete ([int](($done / $total) * 100))
 
@@ -134,14 +139,12 @@ function Invoke-SubtitleBatch {
 
         $results.Add($record)
 
-        if ($LogPath) {
-            $line = '[{0}] [{1}] {2}{3}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $record.Status, $file.FullName,
-                (if ($record.Error) { ' -- ' + $record.Error } else { '' })
-            Add-Content -Path $LogPath -Value $line -Encoding UTF8
-        }
+        $line = '[{0}] {1}{2}' -f $record.Status, $file.FullName,
+            (if ($record.Error) { ' -- ' + $record.Error } else { '' })
+        Write-SubtitleLog -Message $line -LogPath $LogPath
     }
 
-    Write-Progress -Activity 'Processing subtitle files' -Completed
+    Write-Progress -Id 1 -Activity 'Processing subtitle files' -Completed
     Write-Verbose "Batch complete: $success succeeded, $failed failed out of $total files."
 
     return $results.ToArray()

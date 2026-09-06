@@ -72,6 +72,12 @@ TRANSLATION_WARNINGS: <any structural challenges (e.g., wordplay, acrostics, num
 
     Write-Verbose "Running translation priming analysis ($($sampleLines.Count) sample entries)..."
 
+    # Nested one level beneath Invoke-SubtitleTranslation's own bar (-Id 2), which
+    # is the only caller of this function.
+    Write-Progress -Id 3 -ParentId 2 -Activity 'Priming translation context' `
+        -Status "Analyzing $($sampleLines.Count) sample entries via $($provider.Name) ($($provider.Model))..." `
+        -PercentComplete 50
+
     # Use higher temperature for creative analysis
     $analysisProv          = [TranslationProvider]::new()
     $analysisProv.Name     = $provider.Name
@@ -86,6 +92,7 @@ TRANSLATION_WARNINGS: <any structural challenges (e.g., wordplay, acrostics, num
 
     if ($adapterResult.FinishReason -eq 'error') {
         Write-Warning "Translation priming failed: $($adapterResult.Content). Proceeding without content context."
+        Write-Progress -Id 3 -ParentId 2 -Activity 'Priming translation context' -Completed
         return $null
     }
 
@@ -112,6 +119,7 @@ TRANSLATION_WARNINGS: <any structural challenges (e.g., wordplay, acrostics, num
     }
 
     Write-Verbose "Priming complete. Content: $($result.ContentType) / Tone: $($result.DominantTone) / Register: $($result.Register)"
+    Write-Progress -Id 3 -ParentId 2 -Activity 'Priming translation context' -Completed
 
     return $result
 }
