@@ -44,7 +44,7 @@ Parse, validate, repair, sync, convert, and AI-translate subtitles — all from 
 - **Repair** — fix numbering, encoding (UTF-16, Windows-1252 → UTF-8), timestamp separators, overlaps
 - **Timestamp manipulation** — shift, stretch (two-point drift correction), merge, split, sync to reference
 - **ASS/SSA advanced** — style CRUD, override tag stripping, plain-text extraction, SRT↔ASS conversion
-- **AI translation** — OpenAI, Anthropic, and Google with batching, caching, glossary, and resume
+- **AI translation** — OpenAI, Anthropic, Google, and OpenRouter with batching, caching, glossary, and resume
 - **Translation quality** — back-translation verification, line-width wrapping
 - **Batch processing** — apply any operation to all subtitle files in a directory tree
 
@@ -52,13 +52,13 @@ Parse, validate, repair, sync, convert, and AI-translate subtitles — all from 
 
 ## AI Translation — The Headline Feature
 
-> SubtitleTools wraps three major AI APIs into a single, pipeline-friendly PowerShell interface designed for subtitle work specifically.
+> SubtitleTools wraps four major AI APIs — including OpenRouter's gateway to hundreds of hosted models — into a single, pipeline-friendly PowerShell interface designed for subtitle work specifically.
 
 **What sets it apart:**
 
 | Capability | Description |
 |------------|-------------|
-| **Multi-provider** | Switch between OpenAI, Anthropic, and Google with one parameter |
+| **Multi-provider** | Switch between OpenAI, Anthropic, Google, and OpenRouter with one parameter |
 | **Content-aware priming** | Analyzes the content first (genre, tone, terminology) and embeds that context into every translation batch — critical for consistent, idiomatic results |
 | **Glossary injection** | Enforce fixed translations for character names, titles, and jargon across an entire series |
 | **Back-translation verification** | Re-translate back to the source language and flag entries where meaning was lost |
@@ -281,7 +281,7 @@ Import-SubtitleFile 'movie.srt' |
 
 ## AI Translation
 
-Supports **OpenAI**, **Anthropic**, and **Google** AI APIs.
+Supports **OpenAI**, **Anthropic**, **Google**, and **OpenRouter** AI APIs.
 
 ### Setup
 
@@ -304,6 +304,19 @@ Get-TranslationProvider
 
 # Remove a saved provider
 Remove-TranslationProvider -Name OpenAI
+```
+
+### OpenRouter
+
+[OpenRouter](https://openrouter.ai) is a unified gateway to hundreds of hosted models (Anthropic, OpenAI, Google, Meta, and more) behind one OpenAI-compatible API and one API key. `Get-OpenRouterModel` discovers current model IDs — no API key required — before you configure the provider:
+
+```powershell
+# Discover current Anthropic models available via OpenRouter (no API key needed)
+Get-OpenRouterModel -Filter 'anthropic/*' |
+    Format-Table Id, ContextLength, PromptPricePerMTok, CompletionPricePerMTok
+
+# Configure and activate OpenRouter with a chosen model
+Set-TranslationProvider -Name OpenRouter -Model 'anthropic/claude-sonnet-5' -ApiKeyPlainText 'sk-or-...'
 ```
 
 ### Basic Translation
@@ -511,7 +524,7 @@ Import-SubtitleFile 'messy.srt' | Optimize-SubtitleFile | Export-SubtitleFile -P
 | **Repair** | `Repair-SrtFile` · `Repair-AssFile` · `Repair-SubtitleEncoding` · `Repair-SubtitleOverlap` · `Repair-SubtitleNumbering` |
 | **Timestamps** | `Add-SubtitleOffset` · `Set-SubtitleOffset` · `Get-SubtitleDuration` · `Set-SubtitleDuration` · `Invoke-SubtitleStretch` · `Merge-SubtitleFile` · `Split-SubtitleFile` |
 | **ASS Advanced** | `Get-AssStyle` · `Set-AssStyle` · `New-AssStyle` · `Remove-AssStyle` · `Remove-AssOverrideTag` · `Convert-AssToPlainText` · `Convert-AssToSrt` · `Convert-SrtToAss` |
-| **AI Translation** | `Set-TranslationProvider` · `Get-TranslationProvider` · `Remove-TranslationProvider` · `New-TranslationSession` · `Invoke-SubtitleTranslation` · `Invoke-BackTranslation` · `Get-TranslationGlossary` · `Add-TranslationGlossaryEntry` · `Remove-TranslationGlossaryEntry` · `Set-SubtitleLineWidth` |
+| **AI Translation** | `Set-TranslationProvider` · `Get-TranslationProvider` · `Remove-TranslationProvider` · `New-TranslationSession` · `Invoke-SubtitleTranslation` · `Invoke-BackTranslation` · `Get-OpenRouterModel` · `Get-TranslationGlossary` · `Add-TranslationGlossaryEntry` · `Remove-TranslationGlossaryEntry` · `Set-SubtitleLineWidth` |
 | **Batch & Utilities** | `Get-SubtitleInfo` · `Find-SubtitleFile` · `Compare-SubtitleFile` · `Optimize-SubtitleFile` · `Invoke-SubtitleBatch` |
 | **Sharing** | `Publish-SubtitleFile` · `Set-SubDLCredential` · `Get-SubDLCredential` · `Remove-SubDLCredential` |
 

@@ -3,14 +3,14 @@ function Remove-TranslationProvider {
     .SYNOPSIS
         Removes a saved translation provider and its stored API key.
     .PARAMETER Name
-        Provider name to remove: OpenAI, Anthropic, or Google.
+        Provider name to remove: OpenAI, Anthropic, Google, or OpenRouter.
     .EXAMPLE
         Remove-TranslationProvider -Name Google
     #>
     [CmdletBinding(SupportsShouldProcess)]
     param(
         [Parameter(Mandatory)]
-        [ValidateSet('OpenAI', 'Anthropic', 'Google')]
+        [ValidateSet('OpenAI', 'Anthropic', 'Google', 'OpenRouter')]
         [string] $Name
     )
 

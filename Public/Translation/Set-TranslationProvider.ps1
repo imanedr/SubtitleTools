@@ -9,7 +9,7 @@ function Set-TranslationProvider {
           %APPDATA%\SubtitleTools\providers.json
         No vault or password is required.
     .PARAMETER Name
-        Provider name: OpenAI, Anthropic, or Google.
+        Provider name: OpenAI, Anthropic, Google, or OpenRouter.
     .PARAMETER Model
         Model ID. Defaults to the recommended model for each provider.
     .PARAMETER ApiKeyPlainText
@@ -43,7 +43,7 @@ function Set-TranslationProvider {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]
-        [ValidateSet('OpenAI', 'Anthropic', 'Google')]
+        [ValidateSet('OpenAI', 'Anthropic', 'Google', 'OpenRouter')]
         [string] $Name,
 
         [string]      $Model,

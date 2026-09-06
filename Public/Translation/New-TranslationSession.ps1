@@ -20,7 +20,7 @@ function New-TranslationSession {
     [OutputType([hashtable])]
     param(
         [Parameter(Mandatory)]
-        [ValidateSet('OpenAI', 'Anthropic', 'Google')]
+        [ValidateSet('OpenAI', 'Anthropic', 'Google', 'OpenRouter')]
         [string] $ProviderName,
 
         [string] $GlossaryPath,

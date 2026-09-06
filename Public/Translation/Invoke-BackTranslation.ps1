@@ -42,7 +42,7 @@ function Invoke-BackTranslation {
         [Parameter(Mandatory)]
         [string] $BackLanguage,
 
-        [ValidateSet('OpenAI', 'Anthropic', 'Google')]
+        [ValidateSet('OpenAI', 'Anthropic', 'Google', 'OpenRouter')]
         [string] $ProviderName,
 
         [hashtable] $Session,

@@ -1,5 +1,5 @@
 class TranslationProvider {
-    [string]   $Name               # 'OpenAI' | 'Anthropic' | 'Google'
+    [string]   $Name               # 'OpenAI' | 'Anthropic' | 'Google' | 'OpenRouter'
     [string]   $Model
     [string]   $ApiKeyEncrypted    # DPAPI-encrypted base64 API key (CurrentUser scope)
     [string]   $BaseUrl            # Allows custom/proxy endpoints

@@ -54,8 +54,12 @@ function Invoke-TranslationProviderAdapter {
             return Invoke-GoogleTranslation -SystemPrompt $SystemPrompt -UserContent $UserContent `
                 -Provider $Provider -ApiKey $ApiKey -MaxRetries $MaxRetries
         }
+        'OpenRouter' {
+            return Invoke-OpenRouterTranslation -SystemPrompt $SystemPrompt -UserContent $UserContent `
+                -Provider $Provider -ApiKey $ApiKey -MaxRetries $MaxRetries
+        }
         default {
-            throw "Invoke-TranslationProviderAdapter: unknown translation provider '$($Provider.Name)'. Supported providers: Anthropic, OpenAI, Google."
+            throw "Invoke-TranslationProviderAdapter: unknown translation provider '$($Provider.Name)'. Supported providers: Anthropic, OpenAI, Google, OpenRouter."
         }
     }
 }

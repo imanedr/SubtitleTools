@@ -3,7 +3,7 @@ function Get-TranslationProvider {
     .SYNOPSIS
         Lists saved translation providers and their configuration.
     .PARAMETER Name
-        Filter by provider name (OpenAI, Anthropic, Google).
+        Filter by provider name (OpenAI, Anthropic, Google, OpenRouter).
     .EXAMPLE
         Get-TranslationProvider
     .EXAMPLE
@@ -12,7 +12,7 @@ function Get-TranslationProvider {
     [CmdletBinding()]
     [OutputType([PSCustomObject[]])]
     param(
-        [ValidateSet('OpenAI', 'Anthropic', 'Google')]
+        [ValidateSet('OpenAI', 'Anthropic', 'Google', 'OpenRouter')]
         [string] $Name
     )
 

@@ -34,8 +34,10 @@ SubtitleTools/
 │   ├── Parsers/                # Invoke-SrtParser, Invoke-AssParser
 │   ├── Writers/                # Write-SrtEntry, Write-AssEntry, Write-AssHeader
 │   ├── Encoding/               # Get-FileEncoding, Remove-ByteOrderMark, ConvertTo-NormalizedText
-│   ├── Translation/            # Invoke-AnthropicTranslation, Invoke-OpenAITranslation, Invoke-GoogleTranslation
-│   │                           # Invoke-TranslationPriming, Build-TranslationSystemPrompt, ProviderStore
+│   ├── Translation/            # Invoke-AnthropicTranslation, Invoke-OpenAITranslation, Invoke-GoogleTranslation,
+│   │                           # Invoke-OpenRouterTranslation, Invoke-TranslationApiRequest (shared HTTP helper),
+│   │                           # Invoke-TranslationProviderAdapter (dispatch), Invoke-TranslationPriming,
+│   │                           # Build-TranslationSystemPrompt, ProviderStore
 │   └── Utilities/              # Timestamp converters, Write-SubtitleLog, New-SubtitleEntryCopy
 │
 ├── Data/                       # Reference JSON data loaded at module import
@@ -194,6 +196,7 @@ TranslationProvider     Name, Model, ApiKeyEncrypted, BaseUrl, RateLimitRpm, Tem
 | `New-TranslationSession` | Create a session with provider, glossary, and cache |
 | `Invoke-SubtitleTranslation` | Translate a file; batch, cache, rate-limit, resume, progress |
 | `Invoke-BackTranslation` | Re-translate to source language; flag low-similarity entries |
+| `Get-OpenRouterModel` | List models available via the OpenRouter API (id, context length, pricing) |
 | `Get-TranslationGlossary` | Read a glossary JSON file |
 | `Add-TranslationGlossaryEntry` | Add / update a glossary term |
 | `Remove-TranslationGlossaryEntry` | Remove glossary terms by name or wildcard |

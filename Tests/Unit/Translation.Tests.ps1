@@ -217,3 +217,125 @@ Describe 'Invoke-GoogleTranslation authentication (Bug H)' {
         }
     }
 }
+
+Describe 'Invoke-OpenRouterTranslation' {
+    BeforeAll {
+        Mock -ModuleName SubtitleTools -CommandName Start-Sleep -MockWith { }
+    }
+
+    It 'Sends Authorization: Bearer and returns parsed content/token counts from a mocked chat-completions response' {
+        Mock -ModuleName SubtitleTools -CommandName Invoke-RestMethod -MockWith {
+            [PSCustomObject]@{
+                choices = @(
+                    [PSCustomObject]@{
+                        message       = [PSCustomObject]@{ content = '1|Hello world' }
+                        finish_reason = 'stop'
+                    }
+                )
+                usage = [PSCustomObject]@{ prompt_tokens = 12; completion_tokens = 7 }
+                model = 'anthropic/claude-sonnet-5'
+            }
+        }
+
+        $result = InModuleScope SubtitleTools -Parameters @{ modelName = 'anthropic/claude-sonnet-5'; baseUrl = 'https://openrouter.test/api/v1'; keyPlain = 'test-key' } {
+            param($modelName, $baseUrl, $keyPlain)
+            $provider          = [TranslationProvider]::new()
+            $provider.Name     = 'OpenRouter'
+            $provider.Model    = $modelName
+            $provider.BaseUrl  = $baseUrl
+            $key = ConvertTo-SecureString $keyPlain -AsPlainText -Force
+            Invoke-OpenRouterTranslation -SystemPrompt 'sys' -UserContent 'user' -Provider $provider -ApiKey $key
+        }
+
+        $result.Content      | Should -Be '1|Hello world'
+        $result.InputTokens  | Should -Be 12
+        $result.OutputTokens | Should -Be 7
+        $result.FinishReason | Should -Be 'stop'
+        $result.Model        | Should -Be 'anthropic/claude-sonnet-5'
+        $result.RetryCount   | Should -Be 0
+
+        Should -Invoke -ModuleName SubtitleTools -CommandName Invoke-RestMethod -Times 1 -Exactly -ParameterFilter {
+            $Headers.ContainsKey('Authorization') -and $Headers['Authorization'] -eq 'Bearer test-key'
+        }
+    }
+}
+
+Describe 'Get-OpenRouterModel' {
+    It 'Parses a mocked /models payload into the right shape, converting per-token prices to per-million' {
+        Mock -ModuleName SubtitleTools -CommandName Invoke-RestMethod -MockWith {
+            [PSCustomObject]@{
+                data = @(
+                    [PSCustomObject]@{
+                        id             = 'anthropic/claude-sonnet-5'
+                        name           = 'Claude Sonnet 5'
+                        context_length = 1000000
+                        pricing        = [PSCustomObject]@{ prompt = '0.000003'; completion = '0.000015' }
+                        top_provider   = [PSCustomObject]@{ max_completion_tokens = 128000 }
+                    }
+                    [PSCustomObject]@{
+                        id             = 'openai/gpt-4o'
+                        name           = 'GPT-4o'
+                        context_length = 128000
+                        pricing        = [PSCustomObject]@{ prompt = '0'; completion = '0' }
+                        top_provider   = [PSCustomObject]@{ max_completion_tokens = $null }
+                    }
+                )
+                total_count = 2
+            }
+        }
+
+        $results = InModuleScope SubtitleTools {
+            Get-OpenRouterModel -BaseUrl 'https://openrouter.test/api/v1'
+        }
+
+        $results.Count | Should -Be 2
+
+        $sonnet = $results | Where-Object { $_.Id -eq 'anthropic/claude-sonnet-5' }
+        $sonnet.Name                   | Should -Be 'Claude Sonnet 5'
+        $sonnet.ContextLength          | Should -Be 1000000
+        $sonnet.MaxOutputTokens        | Should -Be 128000
+        $sonnet.PromptPricePerMTok     | Should -Be 3
+        $sonnet.CompletionPricePerMTok | Should -Be 15
+
+        $gpt4o = $results | Where-Object { $_.Id -eq 'openai/gpt-4o' }
+        $gpt4o.MaxOutputTokens        | Should -BeNullOrEmpty
+        $gpt4o.PromptPricePerMTok     | Should -Be 0
+        $gpt4o.CompletionPricePerMTok | Should -Be 0
+
+        Should -Invoke -ModuleName SubtitleTools -CommandName Invoke-RestMethod -Times 1 -Exactly -ParameterFilter {
+            $Method -eq 'Get' -and $Uri -eq 'https://openrouter.test/api/v1/models'
+        }
+    }
+
+    It 'Filters results by -Filter against id and name' {
+        Mock -ModuleName SubtitleTools -CommandName Invoke-RestMethod -MockWith {
+            [PSCustomObject]@{
+                data = @(
+                    [PSCustomObject]@{
+                        id             = 'anthropic/claude-sonnet-5'
+                        name           = 'Claude Sonnet 5'
+                        context_length = 1000000
+                        pricing        = [PSCustomObject]@{ prompt = '0.000003'; completion = '0.000015' }
+                        top_provider   = [PSCustomObject]@{ max_completion_tokens = 128000 }
+                    }
+                    [PSCustomObject]@{
+                        id             = 'openai/gpt-4o'
+                        name           = 'GPT-4o'
+                        context_length = 128000
+                        pricing        = [PSCustomObject]@{ prompt = '0.0000025'; completion = '0.00001' }
+                        top_provider   = [PSCustomObject]@{ max_completion_tokens = 16384 }
+                    }
+                )
+            }
+        }
+
+        $results = InModuleScope SubtitleTools {
+            Get-OpenRouterModel -Filter 'anthropic/*' -BaseUrl 'https://openrouter.test/api/v1'
+        }
+
+        $results.Count | Should -Be 1
+        $results[0].Id | Should -Be 'anthropic/claude-sonnet-5'
+
+        Should -Invoke -ModuleName SubtitleTools -CommandName Invoke-RestMethod -Times 1 -Exactly
+    }
+}

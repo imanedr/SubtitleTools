@@ -9,7 +9,8 @@ LONG DESCRIPTION
     SubtitleTools is a PowerShell module that covers the full subtitle lifecycle.
     It can read and write SRT and ASS/SSA files with full round-trip fidelity,
     detect and repair common problems, shift or stretch timestamps, convert between
-    formats, and translate subtitles using the OpenAI, Anthropic, or Google AI APIs.
+    formats, and translate subtitles using the OpenAI, Anthropic, Google, or
+    OpenRouter AI APIs.
 
     All timestamp arithmetic uses [TimeSpan] internally. Format-specific string
     conversion (SRT: HH:mm:ss,fff; ASS: H:mm:ss.cc) happens automatically at
@@ -93,6 +94,7 @@ LONG DESCRIPTION
         New-TranslationSession  Create a reusable session (provider, glossary, cache)
         Invoke-SubtitleTranslation Translate a file; batch, cache, rate-limit, resume
         Invoke-BackTranslation  Re-translate to source language; flag low similarity
+        Get-OpenRouterModel     List models available via the OpenRouter API
         Get-TranslationGlossary Read a glossary JSON file
         Add-TranslationGlossaryEntry Add or update a glossary term
         Remove-TranslationGlossaryEntry Remove glossary terms by name or wildcard

@@ -3,7 +3,7 @@
     GUID                 = 'a3f2e1d0-4b5c-6d7e-8f9a-0b1c2d3e4f50'
     Author               = 'Iman Edrisian'
     Copyright            = '(c) 2025 Iman Edrisian. All rights reserved.'
-    Description          = 'A comprehensive toolkit for SRT and ASS/SSA subtitle files: parse, validate, repair, shift timestamps, fix encoding, convert formats, manage ASS styles, and translate using OpenAI, Anthropic, or Google AI APIs.'
+    Description          = 'A comprehensive toolkit for SRT and ASS/SSA subtitle files: parse, validate, repair, shift timestamps, fix encoding, convert formats, manage ASS styles, and translate using OpenAI, Anthropic, Google, or OpenRouter AI APIs.'
     PowerShellVersion    = '5.1'
     CompatiblePSEditions = @('Desktop', 'Core')
 
@@ -57,6 +57,7 @@
         'Remove-TranslationProvider'
         'New-TranslationSession'
         'Invoke-BackTranslation'
+        'Get-OpenRouterModel'
         'Get-TranslationGlossary'
         'Add-TranslationGlossaryEntry'
         'Remove-TranslationGlossaryEntry'
@@ -83,7 +84,7 @@
     PrivateData          = @{
         PSData = @{
             Tags         = @('Subtitle', 'SRT', 'ASS', 'SSA', 'SubRip', 'SubStation', 'Translation',
-                             'Video', 'Encoding', 'Repair', 'Timestamp', 'Batch', 'OpenAI', 'Anthropic', 'Gemini')
+                             'Video', 'Encoding', 'Repair', 'Timestamp', 'Batch', 'OpenAI', 'Anthropic', 'Gemini', 'OpenRouter')
             ProjectUri   = 'https://github.com/imanedr/SubtitleTools'
             LicenseUri   = 'https://github.com/imanedr/SubtitleTools/blob/main/LICENSE'
             ReleaseNotes = @'

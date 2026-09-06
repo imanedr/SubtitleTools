@@ -3,7 +3,8 @@
     .SYNOPSIS
         Translates a subtitle file using an AI provider API.
     .DESCRIPTION
-        Supports OpenAI (GPT-4o), Anthropic (Claude), and Google (Gemini).
+        Supports OpenAI (GPT-4o), Anthropic (Claude), Google (Gemini), and OpenRouter
+        (a unified gateway to many hosted models).
         Batches entries to respect token limits. Caches results by content hash.
         ASS override tags are stripped before translation and reinserted after.
 
@@ -24,7 +25,7 @@
     .PARAMETER Path
         Path to a subtitle file to load and translate.
     .PARAMETER ProviderName
-        The AI provider to use: OpenAI, Anthropic, or Google.
+        The AI provider to use: OpenAI, Anthropic, Google, or OpenRouter.
     .PARAMETER SourceLanguage
         BCP-47 language code of the source (e.g., 'en'). Optional â€” providers can auto-detect.
     .PARAMETER TargetLanguage
@@ -82,7 +83,7 @@
 
         [Parameter(Mandatory, ParameterSetName = 'Path')]
         [Parameter(ParameterSetName = 'Object')]
-        [ValidateSet('OpenAI', 'Anthropic', 'Google')]
+        [ValidateSet('OpenAI', 'Anthropic', 'Google', 'OpenRouter')]
         [string] $ProviderName,
 
         [string] $SourceLanguage = '',

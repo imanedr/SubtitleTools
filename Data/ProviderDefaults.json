@@ -22,5 +22,13 @@
     "MaxTokensPerBatch": 8000,
     "MaxOutputTokens": 8192,
     "Temperature": 0.3
+  },
+  "OpenRouter": {
+    "Model": "anthropic/claude-sonnet-5",
+    "BaseUrl": "https://openrouter.ai/api/v1",
+    "RateLimitRpm": 60,
+    "MaxTokensPerBatch": 4000,
+    "MaxOutputTokens": 8192,
+    "Temperature": 0.3
   }
 }
