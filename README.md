@@ -97,16 +97,16 @@ Install-Module -Name SubtitleTools -Scope CurrentUser
 ### Option B — Manual install
 
 ```powershell
-# Copy the versioned folder into your module path
-Copy-Item -Path '.\SubtitleTools' `
-    -Destination "$([Environment]::GetFolderPath('MyDocuments'))\PowerShell\Modules\SubtitleTools" `
+# Copy the module files into a version-named folder on your module path
+Copy-Item -Path '.\SubtitleTools\*' `
+    -Destination "$([Environment]::GetFolderPath('MyDocuments'))\PowerShell\Modules\SubtitleTools\1.1.0" `
     -Recurse
 ```
 
 ### Option C — Import directly from the cloned repo
 
 ```powershell
-Import-Module 'C:\path\to\SubtitleTools\1.0.0\SubtitleTools.psd1' -Force
+Import-Module 'C:\path\to\SubtitleTools\SubtitleTools.psd1' -Force
 ```
 
 ### Verify
