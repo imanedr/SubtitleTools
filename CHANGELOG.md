@@ -5,6 +5,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Configurable OpenRouter reasoning effort.** `Set-TranslationProvider` now
+  accepts `-ReasoningEffort Auto|None|Minimal|Low|Medium|High|XHigh|Max` and
+  persists the selection with the provider. `None` disables reasoning for
+  models where OpenRouter reports reasoning as optional, avoiding long thinking
+  phases and their output-token cost; `Auto` preserves the model's default.
+
 ## [1.3.1] - 2026-09-06
 
 ### Fixed
