@@ -191,17 +191,78 @@
         # Run if: -PrimeWithContext is set AND session has no context yet
         if ($PrimeWithContext -and (-not $Session.ContentContext)) {
             Write-Verbose 'Starting translation priming (content analysis)...'
-            Write-Progress @progressParams -Activity $activity `
-                -Status "Phase 0 | Priming translation context ($PrimingSampleSize sample entries)..." `
+
+            # Detect reasoning models: they spend a long time generating internal
+            # reasoning tokens before any visible content appears, so the priming
+            # phase can feel stuck. Warn upfront so the user knows what to expect.
+            $isReasoningModel = $provider.Model -match '(deepseek|o1-preview|o1-mini|o3-mini|reasoning|gemini-thinking|gemini-2\.5-pro|claude-opus-4|claude-sonnet-4)'
+            if ($isReasoningModel) {
+                Write-Warning "Reasoning model detected ('$($provider.Model)'). Priming analysis may take 1-5 minutes while the model thinks. Consider -PrimeWithContext:`$false or a non-reasoning model if this is too slow."
+            }
+
+            $primingStart = [datetime]::UtcNow
+
+            # Live progress callback for the priming API call. Simplifies the streaming
+            # deltas into a human-readable status line: "Thinking...", "Writing: N chars",
+            # or "Found: FIELD, FIELD...".
+            $primingCallback = $null
+            if (-not $NoStream) {
+                $primingState = @{
+                    LastUpdate = [datetime]::MinValue
+                    Fields     = [System.Collections.Generic.List[string]]::new()
+                }
+                $primingCallback = {
+                    param($accumulated, $counters)
+
+                    $now = [datetime]::UtcNow
+                    if (($now - $primingState.LastUpdate).TotalMilliseconds -lt 300) { return }
+                    $primingState.LastUpdate = $now
+
+                    if ($counters.Reasoning) {
+                        $reasonChars = $counters.ReasoningLength
+                        $elapsed = [int]([datetime]::UtcNow - $primingStart).TotalSeconds
+                        Write-Progress -Id 3 -ParentId 2 -Activity 'Priming translation context' `
+                            -Status "Thinking... $($reasonChars) reasoning chars | $($elapsed)s elapsed" `
+                            -PercentComplete -1
+                    } elseif ($accumulated) {
+                        # Detect labeled fields as they appear in the stream so the user
+                        # sees the analysis building up in real time.
+                        foreach ($line in ($accumulated -split "`n")) {
+                            if ($line -match '^([A-Z_]+):\s*') {
+                                $field = $Matches[1]
+                                if ($primingState.Fields -notcontains $field) {
+                                    $primingState.Fields.Add($field)
+                                }
+                            }
+                        }
+                        $fieldList = if ($primingState.Fields.Count -gt 0) {
+                            "Found: $($primingState.Fields -join ', ')"
+                        } else {
+                            "Writing: $($accumulated.Length) chars"
+                        }
+                        Write-Progress -Id 3 -ParentId 2 -Activity 'Priming translation context' `
+                            -Status $fieldList -PercentComplete -1
+                    }
+                }.GetNewClosure()
+            }
+
+            Write-Progress -Id 3 -ParentId 2 -Activity 'Priming translation context' `
+                -Status "Sending $($PrimingSampleSize) sample entries for analysis..." `
                 -PercentComplete 0
 
             $primedCtx = Invoke-TranslationPriming `
-                -InputObject   $InputObject `
-                -Session       $Session `
-                -ApiKey        $apiKeySecure `
+                -InputObject    $InputObject `
+                -Session        $Session `
+                -ApiKey         $apiKeySecure `
                 -SourceLanguage $SourceLanguage `
                 -TargetLanguage $TargetLanguage `
-                -SampleSize    $PrimingSampleSize
+                -SampleSize     $PrimingSampleSize `
+                -StreamCallback $primingCallback
+
+            $primingElapsed = [int]([datetime]::UtcNow - $primingStart).TotalSeconds
+            if ($primingElapsed -gt 90) {
+                Write-Warning "Priming took $($primingElapsed)s. Reasoning models can spend several minutes on content analysis. Consider skipping priming with -PrimeWithContext:`$false or using a non-reasoning model."
+            }
 
             $Session.ContentContext = $primedCtx
         }
@@ -448,6 +509,12 @@
                     # running total - doing so makes the bar jump backwards.
                     if ($live.Depth -gt 0) {
                         $phase       = "Recovering $($live.LinesDone)/$($live.Expected)"
+                        $entriesDone = $doneEntries
+                    } elseif ($live.Reasoning) {
+                        # Reasoning models spend a long time generating internal
+                        # reasoning tokens before any visible content. Show this
+                        # phase explicitly so the user knows the batch is not stuck.
+                        $phase       = "Thinking ($($live.ReasoningLength) reasoning chars)"
                         $entriesDone = $doneEntries
                     } else {
                         $phase       = "Translating $($live.LinesDone)/$($live.Expected)"

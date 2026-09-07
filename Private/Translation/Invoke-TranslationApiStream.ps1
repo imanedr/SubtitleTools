@@ -85,19 +85,21 @@ function Invoke-TranslationApiStream {
     }
 
     $result = @{
-        Success      = $false
-        Content      = ''
-        InputTokens  = 0
-        OutputTokens = 0
-        FinishReason = $null
-        StatusCode   = $null
-        ErrorMessage = $null
+        Success         = $false
+        Content         = ''
+        InputTokens     = 0
+        OutputTokens    = 0
+        ReasoningLength = 0
+        FinishReason    = $null
+        StatusCode      = $null
+        ErrorMessage    = $null
     }
 
-    $json    = $Body | ConvertTo-Json -Depth $JsonDepth
-    $client  = $null
-    $reader  = $null
-    $builder = [System.Text.StringBuilder]::new()
+    $json             = $Body | ConvertTo-Json -Depth $JsonDepth
+    $client           = $null
+    $reader           = $null
+    $builder          = [System.Text.StringBuilder]::new()
+    $resultReasoning  = [System.Text.StringBuilder]::new()
 
     try {
         $client         = [System.Net.Http.HttpClient]::new()
@@ -151,6 +153,13 @@ function Invoke-TranslationApiStream {
                         if ($null -ne $sse.usage.prompt_tokens)     { $result.InputTokens  = [int]$sse.usage.prompt_tokens }
                         if ($null -ne $sse.usage.completion_tokens) { $result.OutputTokens = [int]$sse.usage.completion_tokens }
                     }
+                    # Reasoning models (DeepSeek, o1, o3, etc.) spend minutes generating
+                    # reasoning tokens before any content appears. Track those separately,
+                    # and also accumulate them in a reasoning buffer so the only-OnDelta
+                    # codepath in the priming phase can detect when thinking is happening.
+                    if ($choice -and $null -ne $choice.delta.reasoning_content) {
+                        $null = $resultReasoning.Append($choice.delta.reasoning_content)
+                    }
                 }
                 'Anthropic' {
                     switch ($sse.type) {
@@ -189,17 +198,29 @@ function Invoke-TranslationApiStream {
 
                 if ($OnDelta) {
                     & $OnDelta $builder.ToString() @{
-                        InputTokens  = $result.InputTokens
-                        OutputTokens = $result.OutputTokens
+                        InputTokens     = $result.InputTokens
+                        OutputTokens    = $result.OutputTokens
+                        ReasoningLength = $resultReasoning.Length
+                        Reasoning       = $false
                     }
+                }
+            } elseif ($resultReasoning.Length -gt 0 -and $OnDelta) {
+                # Reasoning models send reasoning_content chunks before any visible
+                # content. Fire OnDelta so callers can reflect the thinking phase.
+                & $OnDelta $builder.ToString() @{
+                    InputTokens     = $result.InputTokens
+                    OutputTokens    = $result.OutputTokens
+                    ReasoningLength = $resultReasoning.Length
+                    Reasoning       = $true
                 }
             }
         }
 
         if ($result.ErrorMessage) { return $result }
 
-        $result.Content = $builder.ToString()
-        $result.Success = $true
+        $result.Content         = $builder.ToString()
+        $result.ReasoningLength = $resultReasoning.Length
+        $result.Success         = $true
         return $result
 
     } catch {

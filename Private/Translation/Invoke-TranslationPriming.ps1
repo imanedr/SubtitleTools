@@ -27,7 +27,9 @@ function Invoke-TranslationPriming {
 
         [string] $TargetLanguage = '',
 
-        [int] $SampleSize = 20
+        [int] $SampleSize = 20,
+
+        [scriptblock] $StreamCallback
     )
 
     # Collect evenly-spaced sample entries
@@ -89,7 +91,7 @@ TRANSLATION_WARNINGS: <any structural challenges (e.g., wordplay, acrostics, num
     $analysisProv.RateLimitRpm      = $provider.RateLimitRpm
     $analysisProv.Temperature       = 0.7
 
-    $adapterResult = Invoke-TranslationProviderAdapter -SystemPrompt $systemPrompt -UserContent $userContent -Provider $analysisProv -ApiKey $ApiKey
+    $adapterResult = Invoke-TranslationProviderAdapter -SystemPrompt $systemPrompt -UserContent $userContent -Provider $analysisProv -ApiKey $ApiKey -StreamCallback $StreamCallback
 
     if ($adapterResult.FinishReason -eq 'error') {
         Write-Warning "Translation priming failed: $($adapterResult.Content). Proceeding without content context."

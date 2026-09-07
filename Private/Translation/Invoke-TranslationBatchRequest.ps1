@@ -193,6 +193,8 @@ function Invoke-TranslationBatchRequest {
                 Chars           = $accumulated.Length
                 OutputEstimated = $estimated
                 Depth           = $Depth
+                Reasoning       = $counters.Reasoning
+                ReasoningLength = $counters.ReasoningLength
             }
         }.GetNewClosure()
     }
