@@ -19,7 +19,12 @@ function Invoke-AnthropicTranslation {
         [Parameter(Mandatory)]
         [SecureString] $ApiKey,
 
-        [int] $MaxRetries = 3
+        [int] $MaxRetries = 3,
+
+        # When supplied, the call is attempted over the streaming path first so the
+        # caller can report progress while the model is still writing; any streaming
+        # failure falls back to the buffered request below.
+        [scriptblock] $StreamCallback
     )
 
     $plainKey = [System.Net.NetworkCredential]::new('', $ApiKey).Password
@@ -37,6 +42,13 @@ function Invoke-AnthropicTranslation {
     $headers = @{
         'x-api-key'         = $plainKey
         'anthropic-version' = '2023-06-01'
+    }
+
+    if ($StreamCallback) {
+        $streamed = Invoke-TranslationStreamAttempt -Uri "$($Provider.BaseUrl)/messages" -Headers $headers -Body $body `
+            -Shape 'Anthropic' -ProviderLabel 'Anthropic' -Model $Provider.Model `
+            -StreamCallback $StreamCallback -JsonDepth 5
+        if ($streamed) { return $streamed }
     }
 
     $result = Invoke-TranslationApiRequest -Uri "$($Provider.BaseUrl)/messages" -Method Post `

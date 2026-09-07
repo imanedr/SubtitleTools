@@ -58,6 +58,12 @@
     .PARAMETER SystemPromptPath
         Path to a custom system prompt template file. Placeholders {{BATCH_SIZE}},
         {{SOURCE}}, and {{TARGET}} are substituted before sending.
+    .PARAMETER NoStream
+        Disable streaming and use a single buffered request per batch. Streaming is on
+        by default: it is what makes the progress bar advance line-by-line while a
+        batch is still being translated, instead of jumping only once the whole batch
+        lands. Use this if a proxy or gateway in front of the provider does not pass
+        server-sent events through cleanly. Translation output is identical either way.
     .PARAMETER ProgressParentId
         Id of a caller's Write-Progress bar to nest this function's progress under
         (via -ParentId). This function's own bar uses -Id 2 and the priming phase
@@ -123,6 +129,8 @@
         [string] $ToneHint,
 
         [string] $SystemPromptPath,
+
+        [switch] $NoStream,
 
         [int] $ProgressParentId
     )
@@ -243,7 +251,7 @@
         $totalUnresolved   = 0
 
         $translateBatch = {
-            param($batchEntries, $prov, $key, $src, $tgt, $glossary, $cache, $contentCtx, $promptPath, $logPath, $onProgress)
+            param($batchEntries, $prov, $key, $src, $tgt, $glossary, $cache, $contentCtx, $promptPath, $logPath, $onProgress, $onLiveProgress)
 
             $texts = @($batchEntries | ForEach-Object { $_.Lines -join '<NL>' })
 
@@ -282,7 +290,8 @@
                     -Glossary         $glossary `
                     -ContentContext   $contentCtx `
                     -SystemPromptPath $(if ($promptPath) { $promptPath } else { '' }) `
-                    -OnProgress       $onProgress
+                    -OnProgress       $onProgress `
+                    -OnLiveProgress   $onLiveProgress
 
                 $inputTokens  = $req.InputTokens
                 $outputTokens = $req.OutputTokens
@@ -401,6 +410,42 @@
                     -Status "Batch $batchNum/$totalBatches | $statusText" -PercentComplete $percent
             }.GetNewClosure()
 
+            # Live, sub-batch progress: fires while the model is still writing, so the
+            # bar advances per translated line and the token counters tick up, rather
+            # than the whole batch landing at once after a long silence. Only reached
+            # when streaming is enabled AND the provider actually streams.
+            $onLiveProgress = $null
+            if (-not $NoStream) {
+                $onLiveProgress = {
+                    param($live)
+
+                    $inSoFar  = $totalInputTokens  + $live.InputTokens
+                    $outSoFar = $totalOutputTokens + $live.OutputTokens
+                    # '~' marks a chars/4 approximation, shown until the provider
+                    # reports real usage (OpenAI-compatible APIs only do so at the end).
+                    $prefix   = if ($live.OutputEstimated) { '~' } else { '' }
+                    $tokens   = "$(& $formatCount $inSoFar)/$prefix$(& $formatCount $outSoFar) tok"
+
+                    # At Depth > 0 this is a recovery pass over entries the batch has
+                    # already reported, so its line count must not be added to the
+                    # running total - doing so makes the bar jump backwards.
+                    if ($live.Depth -gt 0) {
+                        $phase       = "Recovering $($live.LinesDone)/$($live.Expected)"
+                        $entriesDone = $doneEntries
+                    } else {
+                        $phase       = "Translating $($live.LinesDone)/$($live.Expected)"
+                        $entriesDone = $doneEntries + $live.LinesDone
+                    }
+
+                    $livePercent = [int](($entriesDone / $totalEntries) * 100)
+                    if ($livePercent -gt 100) { $livePercent = 100 }
+
+                    Write-Progress @progressParams -Activity $activity `
+                        -Status "Batch $batchNum/$totalBatches | $phase | $entriesDone/$totalEntries entries | $tokens" `
+                        -PercentComplete $livePercent
+                }.GetNewClosure()
+            }
+
             Write-Progress @progressParams -Activity $activity `
                 -Status "Batch $batchNum/$totalBatches | Calling API ($($currentBatch.Count) entries) | $doneEntries/$totalEntries done..." `
                 -PercentComplete $percent
@@ -409,7 +454,7 @@
             try {
                 $batchOutcome = & $translateBatch $currentBatch $provider $apiKeySecure `
                     $SourceLanguage $TargetLanguage $Session.Glossary $Session.Cache `
-                    $Session.ContentContext $SystemPromptPath $LogPath $onProgress
+                    $Session.ContentContext $SystemPromptPath $LogPath $onProgress $onLiveProgress
             } catch {
                 & $saveCheckpoint $Session
                 throw

@@ -19,7 +19,12 @@ function Invoke-OpenAITranslation {
         [Parameter(Mandatory)]
         [SecureString] $ApiKey,
 
-        [int] $MaxRetries = 3
+        [int] $MaxRetries = 3,
+
+        # When supplied, the call is attempted over the streaming path first so the
+        # caller can report progress while the model is still writing; any streaming
+        # failure falls back to the buffered request below.
+        [scriptblock] $StreamCallback
     )
 
     $plainKey = [System.Net.NetworkCredential]::new('', $ApiKey).Password
@@ -36,6 +41,13 @@ function Invoke-OpenAITranslation {
 
     $headers = @{
         'Authorization' = "Bearer $plainKey"
+    }
+
+    if ($StreamCallback) {
+        $streamed = Invoke-TranslationStreamAttempt -Uri "$($Provider.BaseUrl)/chat/completions" -Headers $headers -Body $body `
+            -Shape 'OpenAI' -ProviderLabel 'OpenAI' -Model $Provider.Model `
+            -StreamCallback $StreamCallback -JsonDepth 5
+        if ($streamed) { return $streamed }
     }
 
     $result = Invoke-TranslationApiRequest -Uri "$($Provider.BaseUrl)/chat/completions" -Method Post `

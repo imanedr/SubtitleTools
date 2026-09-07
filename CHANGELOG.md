@@ -5,6 +5,60 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.2.0] - 2026-09-06
+
+### Fixed
+
+- **Long files were silently translated only part-way.** A 294-entry episode
+  sent to `google/gemini-3.8-flash` via OpenRouter came back translated up to
+  entry 76; entries 77-294 were written out as untranslated source text with
+  no error. Three things combined to produce that:
+  - Batches were sized purely by character budget (`MaxTokensPerBatch * 4`
+    chars). A short file fits that budget whole, so all 294 entries went out
+    as a *single* call asking the model for 294 translated lines.
+  - `MaxOutputTokens` defaulted to 8192. On a reasoning model the thinking
+    tokens are billed against that same budget, so generation stopped before
+    the answer was finished.
+  - The truncated reply was an HTTP 200 carrying `finish_reason: "length"`.
+    `FinishReason` was only ever compared against `'error'`, so truncation was
+    invisible and the missing entries took the "not in the response" path,
+    which quietly substituted source text.
+
+  Truncation is now detected across all providers' spellings of it
+  (`length`, `max_tokens`, `MAX_TOKENS`), and any entries a response fails to
+  return are re-requested in progressively smaller batches rather than given
+  up on. Falling back to source text is now a last resort and reports itself
+  on the warning stream, not only in the log file.
+- **Untranslated fallback text was written to the translation cache**, which
+  made it a permanent cache hit — so neither re-running the file nor resuming
+  from a checkpoint could ever repair the affected entries.
+- **A truncated response's last line is now discarded** rather than kept.
+  Generation stops mid-token, so that line can be a half-written sentence.
+
+### Added
+
+- **Streaming translation with live progress.** Translation requests now use
+  server-sent events by default, so the progress bar advances per translated
+  line and the token counters tick upward *while* a batch is being written,
+  instead of jumping only once the whole batch lands. Supported on all four
+  providers. Implemented on `HttpClient` so it works on Windows PowerShell 5.1
+  and PowerShell 7 alike, and any streaming failure falls back to the previous
+  buffered request — streaming is never why a translation fails. Use
+  `-NoStream` on `Invoke-SubtitleTranslation` to opt out (e.g. behind a proxy
+  that does not pass SSE through).
+- **`MaxEntriesPerBatch` provider setting** (default 40). Caps how many
+  entries go into one API call, bounding what the model has to *write* rather
+  than only what it has to read. This is the structural fix for the
+  one-giant-batch problem above, and it also gives a long file many more
+  progress updates.
+
+### Changed
+
+- Default `MaxOutputTokens` raised from 8192 to 16384, since reasoning models
+  spend part of that budget on thinking tokens.
+- Batches are now planned up front, so progress reports a real `Batch 3/8`
+  denominator instead of an open-ended count.
+
 ## [1.1.0] - 2026-09-06
 
 ### Added

@@ -75,6 +75,26 @@ function Invoke-TranslationBatchRequest {
     .PARAMETER OnProgress
         Optional scriptblock invoked with a single status string whenever a retry
         round starts, so a long self-healing batch does not look frozen.
+    .PARAMETER OnLiveProgress
+        Optional scriptblock invoked repeatedly WHILE the model is still writing, with
+        one hashtable argument: LinesDone, Expected, InputTokens, OutputTokens, Chars,
+        OutputEstimated, Depth. Supplying it switches the provider call to the streaming path
+        (which silently falls back to a buffered request if streaming is unavailable,
+        in which case this is simply never invoked).
+
+        LinesDone counts only newline-terminated numbered lines: the line currently
+        being generated is not counted, because it is incomplete by definition.
+
+        OutputEstimated is $true while the provider has not yet reported real usage -
+        OpenAI-compatible endpoints only send the usage block in the final chunk, so
+        until then OutputTokens is a chars/4 approximation and should be displayed as
+        such rather than passed off as a measurement.
+
+        Depth is 0 for the batch's own request and >0 for a recovery pass. LinesDone
+        and Expected are relative to whatever is being requested right now, so a
+        consumer that adds LinesDone to a running total must not do so at Depth > 0 -
+        a recovery pass covers entries already counted, and adding them again makes
+        the progress bar run backwards.
     .OUTPUTS
         Hashtable: Translations (string[]; an entry never resolved is left empty -
         note that PowerShell coerces $null to '' on assignment into a [string[]],
@@ -108,7 +128,9 @@ function Invoke-TranslationBatchRequest {
 
         [int] $Depth = 0,
 
-        [scriptblock] $OnProgress
+        [scriptblock] $OnProgress,
+
+        [scriptblock] $OnLiveProgress
     )
 
     $n = $Texts.Count
@@ -137,9 +159,47 @@ function Invoke-TranslationBatchRequest {
     # translated text is free to contain pipes.
     $userContent = (0..($n - 1) | ForEach-Object { "$($_ + 1)|$($Texts[$_])" }) -join "`n"
 
+    # Translates raw stream deltas into "entries finished so far", throttled so a fast
+    # token stream cannot swamp the caller with redraws. $liveState is a hashtable
+    # rather than a scalar because GetNewClosure captures by value - only a reference
+    # type lets the throttle timestamp survive between invocations.
+    $streamCallback = $null
+    if ($OnLiveProgress) {
+        $liveState = @{ LastUpdate = [datetime]::MinValue }
+
+        $streamCallback = {
+            param($accumulated, $counters)
+
+            $now = [datetime]::UtcNow
+            if (($now - $liveState.LastUpdate).TotalMilliseconds -lt 200) { return }
+            $liveState.LastUpdate = $now
+
+            # Drop the final element: it is the line still being generated.
+            $parts     = $accumulated -split '\r?\n'
+            $completed = 0
+            for ($p = 0; $p -lt ($parts.Count - 1); $p++) {
+                if ($parts[$p] -match '^\s*\d+\s*\|') { $completed++ }
+            }
+
+            $reportedOut = [int]$counters.OutputTokens
+            $estimated   = $reportedOut -le 0
+            if ($estimated) { $reportedOut = [int]($accumulated.Length / 4) }
+
+            & $OnLiveProgress @{
+                LinesDone       = $completed
+                Expected        = $n
+                InputTokens     = [int]$counters.InputTokens
+                OutputTokens    = $reportedOut
+                Chars           = $accumulated.Length
+                OutputEstimated = $estimated
+                Depth           = $Depth
+            }
+        }.GetNewClosure()
+    }
+
     $adapterResult = Invoke-TranslationProviderAdapter `
         -SystemPrompt $systemPrompt -UserContent $userContent `
-        -Provider $Provider -ApiKey $ApiKey
+        -Provider $Provider -ApiKey $ApiKey -StreamCallback $streamCallback
 
     $result.ApiCalls     = 1
     $result.InputTokens  = [int]$adapterResult.InputTokens
@@ -217,7 +277,8 @@ function Invoke-TranslationBatchRequest {
             -SystemPromptPath $SystemPromptPath `
             -MaxSplitDepth    $MaxSplitDepth `
             -Depth            ($Depth + 1) `
-            -OnProgress       $OnProgress
+            -OnProgress       $OnProgress `
+            -OnLiveProgress   $OnLiveProgress
 
         for ($j = 0; $j -lt $chunk.Count; $j++) {
             $result.Translations[$chunk[$j]] = $sub.Translations[$j]

@@ -329,7 +329,7 @@ Describe 'Invoke-SubtitleTranslation checkpoint-on-failure and token aggregation
             $e3.Index = 3; $e3.Start = [TimeSpan]::FromSeconds(2);    $e3.End = [TimeSpan]::FromSeconds(3); $e3.Lines = @('Third line of dialogue')
             $file.Entries = @($e1, $e2, $e3)
 
-            { Invoke-SubtitleTranslation -InputObject $file -TargetLanguage 'fa' -Session $session } |
+            { Invoke-SubtitleTranslation -InputObject $file -TargetLanguage 'fa' -Session $session -NoStream } |
                 Should -Throw -ExpectedMessage '*API call failed*'
 
             Test-Path $checkpointPath | Should -BeTrue
@@ -383,7 +383,7 @@ Describe 'Invoke-SubtitleTranslation checkpoint-on-failure and token aggregation
             $e2.Index = 2; $e2.Start = [TimeSpan]::FromSeconds(1); $e2.End = [TimeSpan]::FromSeconds(2); $e2.Lines = @('Second line of dialogue')
             $file.Entries = @($e1, $e2)
 
-            $result = Invoke-SubtitleTranslation -InputObject $file -TargetLanguage 'fa' -Session $session -LogPath $logPath
+            $result = Invoke-SubtitleTranslation -InputObject $file -TargetLanguage 'fa' -Session $session -LogPath $logPath -NoStream
 
             $result.Entries.Count | Should -Be 2
 
@@ -466,7 +466,12 @@ Describe 'Truncated-response recovery' {
             }
             $file.Entries = @($entries)
 
-            $result = Invoke-SubtitleTranslation -InputObject $file -TargetLanguage 'fa' -Session $session
+            # -NoStream keeps these cases on the buffered Invoke-RestMethod path that
+            # they mock. Without it the adapter would first attempt a real streaming
+            # request to the fake host and only then fall back - correct behaviour,
+            # but it makes the test depend on a DNS failure. Streaming is covered
+            # separately, against a mocked Invoke-TranslationApiStream.
+            $result = Invoke-SubtitleTranslation -InputObject $file -TargetLanguage 'fa' -Session $session -NoStream
             return @{ Result = $result; Session = $session }
         }.ToString()
     }
@@ -686,5 +691,239 @@ Describe 'Get-OpenRouterModel' {
         $results[0].Id | Should -Be 'anthropic/claude-sonnet-5'
 
         Should -Invoke -ModuleName SubtitleTools -CommandName Invoke-RestMethod -Times 1 -Exactly
+    }
+}
+
+Describe 'Streaming path' {
+    BeforeAll {
+        # Drives one batch through Invoke-SubtitleTranslation. Streaming is on by
+        # default; -NoStream is appended by the tests that want the buffered path.
+        $StreamHelper = {
+            param($noStream)
+
+            $provider                    = [TranslationProvider]::new()
+            $provider.Name               = 'OpenRouter'
+            $provider.Model              = 'google/gemini-3.8-flash'
+            $provider.BaseUrl            = 'https://openrouter.test/api/v1'
+            $provider.MaxTokensPerBatch  = 10000
+            $provider.MaxEntriesPerBatch = 40
+            $provider.RateLimitRpm       = 0
+            $provider.ApiKeyEncrypted    = 'placeholder-since-Unprotect-ApiKey-is-mocked'
+
+            $session = @{
+                Provider       = $provider
+                Glossary       = @{}
+                Cache          = @{}
+                CheckpointPath = $null
+                ContentContext = $null
+            }
+
+            $file        = [SubtitleFile]::new()
+            $file.Format = 'SRT'
+            $e = [SubtitleEntry]::new()
+            $e.Index = 1; $e.Start = [TimeSpan]::Zero; $e.End = [TimeSpan]::FromSeconds(1); $e.Lines = @('Source line 1')
+            $file.Entries = @($e)
+
+            if ($noStream) {
+                Invoke-SubtitleTranslation -InputObject $file -TargetLanguage 'fa' -Session $session -NoStream
+            } else {
+                Invoke-SubtitleTranslation -InputObject $file -TargetLanguage 'fa' -Session $session
+            }
+        }.ToString()
+    }
+
+    BeforeEach {
+        Mock -ModuleName SubtitleTools -CommandName Start-Sleep     -MockWith { }
+        Mock -ModuleName SubtitleTools -CommandName Unprotect-ApiKey -MockWith { 'fake-plain-key' }
+    }
+
+    Context 'Invoke-TranslationStreamAttempt fallback policy' {
+        It 'Returns the adapter-shaped result when the stream succeeds' {
+            Mock -ModuleName SubtitleTools -CommandName Invoke-TranslationApiStream -MockWith {
+                @{ Success = $true; Content = '1|hi'; InputTokens = 9; OutputTokens = 4
+                   FinishReason = 'stop'; StatusCode = 200; ErrorMessage = $null }
+            }
+
+            $result = InModuleScope SubtitleTools {
+                Invoke-TranslationStreamAttempt -Uri 'https://x.test/v1/chat/completions' `
+                    -Body @{ model = 'm'; messages = @() } -Shape 'OpenAI' `
+                    -ProviderLabel 'OpenRouter' -Model 'm' -StreamCallback { }
+            }
+
+            $result.Content      | Should -Be '1|hi'
+            $result.InputTokens  | Should -Be 9
+            $result.OutputTokens | Should -Be 4
+            $result.FinishReason | Should -Be 'stop'
+        }
+
+        It 'Asks for stream + usage on the OpenAI shape, and only stream on Anthropic' {
+            Mock -ModuleName SubtitleTools -CommandName Invoke-TranslationApiStream -MockWith {
+                @{ Success = $true; Content = '1|hi'; InputTokens = 1; OutputTokens = 1
+                   FinishReason = 'stop'; StatusCode = 200; ErrorMessage = $null }
+            }
+
+            InModuleScope SubtitleTools {
+                Invoke-TranslationStreamAttempt -Uri 'https://x.test/v1/chat/completions' `
+                    -Body @{ model = 'm' } -Shape 'OpenAI' -ProviderLabel 'OpenRouter' -Model 'm' -StreamCallback { } | Out-Null
+                Invoke-TranslationStreamAttempt -Uri 'https://x.test/v1/messages' `
+                    -Body @{ model = 'm' } -Shape 'Anthropic' -ProviderLabel 'Anthropic' -Model 'm' -StreamCallback { } | Out-Null
+            }
+
+            # Without stream_options.include_usage an OpenAI-compatible endpoint sends
+            # no usage block at all and every token count comes back zero.
+            Should -Invoke -ModuleName SubtitleTools -CommandName Invoke-TranslationApiStream -Times 1 -Exactly -ParameterFilter {
+                $Shape -eq 'OpenAI' -and $Body['stream'] -eq $true -and $Body['stream_options'].include_usage -eq $true
+            }
+            Should -Invoke -ModuleName SubtitleTools -CommandName Invoke-TranslationApiStream -Times 1 -Exactly -ParameterFilter {
+                $Shape -eq 'Anthropic' -and $Body['stream'] -eq $true -and -not $Body.ContainsKey('stream_options')
+            }
+        }
+
+        It 'Returns $null so the caller falls back when <case>' -ForEach @(
+            @{ case = 'the transport failed with no HTTP status'; status = $null }
+            @{ case = 'the provider returned 429';                status = 429 }
+            @{ case = 'the provider returned 503';                status = 503 }
+        ) {
+            Mock -ModuleName SubtitleTools -CommandName Invoke-TranslationApiStream -MockWith {
+                @{ Success = $false; Content = ''; InputTokens = 0; OutputTokens = 0
+                   FinishReason = $null; StatusCode = $status; ErrorMessage = 'nope' }
+            }.GetNewClosure()
+
+            $result = InModuleScope SubtitleTools {
+                Invoke-TranslationStreamAttempt -Uri 'https://x.test/v1/chat/completions' `
+                    -Body @{ model = 'm' } -Shape 'OpenAI' -ProviderLabel 'OpenRouter' -Model 'm' -StreamCallback { }
+            }
+
+            # 429/5xx must reach the buffered path, whose backoff-retry loop handles
+            # them; a transport failure must not be mistaken for a provider rejection.
+            $result | Should -BeNullOrEmpty
+        }
+
+        It 'Reports a 401 as an error instead of re-sending it on the buffered path' {
+            Mock -ModuleName SubtitleTools -CommandName Invoke-TranslationApiStream -MockWith {
+                @{ Success = $false; Content = ''; InputTokens = 0; OutputTokens = 0
+                   FinishReason = $null; StatusCode = 401; ErrorMessage = 'invalid api key' }
+            }
+
+            $result = InModuleScope SubtitleTools {
+                Invoke-TranslationStreamAttempt -Uri 'https://x.test/v1/chat/completions' `
+                    -Body @{ model = 'm' } -Shape 'OpenAI' -ProviderLabel 'OpenRouter' -Model 'm' -StreamCallback { }
+            }
+
+            $result              | Should -Not -BeNullOrEmpty
+            $result.FinishReason | Should -Be 'error'
+            $result.Content      | Should -Be 'invalid api key'
+        }
+    }
+
+    Context 'Wiring through Invoke-SubtitleTranslation' {
+        It 'Streams by default and never reaches the buffered request' {
+            Mock -ModuleName SubtitleTools -CommandName Invoke-TranslationApiStream -MockWith {
+                # Feed the caller two deltas, the way a real stream would.
+                if ($OnDelta) {
+                    & $OnDelta "1|Trans" @{ InputTokens = 0; OutputTokens = 0 }
+                    & $OnDelta "1|Translated`n" @{ InputTokens = 0; OutputTokens = 0 }
+                }
+                @{ Success = $true; Content = "1|Translated`n"; InputTokens = 20; OutputTokens = 10
+                   FinishReason = 'stop'; StatusCode = 200; ErrorMessage = $null }
+            }
+            Mock -ModuleName SubtitleTools -CommandName Invoke-RestMethod -MockWith { throw 'buffered path must not be used' }
+
+            $result = InModuleScope SubtitleTools -Parameters @{ helper = $StreamHelper } {
+                param($helper)
+                & ([scriptblock]::Create($helper)) $false
+            }
+
+            $result.Entries[0].Lines[0] | Should -Be 'Translated'
+            Should -Invoke -ModuleName SubtitleTools -CommandName Invoke-TranslationApiStream -Times 1 -Exactly
+            Should -Invoke -ModuleName SubtitleTools -CommandName Invoke-RestMethod -Times 0 -Exactly
+        }
+
+        It 'Uses the buffered request and never opens a stream when -NoStream is given' {
+            Mock -ModuleName SubtitleTools -CommandName Invoke-TranslationApiStream -MockWith { throw 'streaming must not be used' }
+            Mock -ModuleName SubtitleTools -CommandName Invoke-RestMethod -MockWith {
+                [PSCustomObject]@{
+                    choices = @([PSCustomObject]@{
+                        message       = [PSCustomObject]@{ content = '1|Buffered' }
+                        finish_reason = 'stop'
+                    })
+                    usage = [PSCustomObject]@{ prompt_tokens = 20; completion_tokens = 10 }
+                    model = 'google/gemini-3.8-flash'
+                }
+            }
+
+            $result = InModuleScope SubtitleTools -Parameters @{ helper = $StreamHelper } {
+                param($helper)
+                & ([scriptblock]::Create($helper)) $true
+            }
+
+            $result.Entries[0].Lines[0] | Should -Be 'Buffered'
+            Should -Invoke -ModuleName SubtitleTools -CommandName Invoke-TranslationApiStream -Times 0 -Exactly
+            Should -Invoke -ModuleName SubtitleTools -CommandName Invoke-RestMethod -Times 1 -Exactly
+        }
+
+        It 'Falls back to the buffered request, still producing a translation, when streaming is unavailable' {
+            Mock -ModuleName SubtitleTools -CommandName Invoke-TranslationApiStream -MockWith {
+                @{ Success = $false; Content = ''; InputTokens = 0; OutputTokens = 0
+                   FinishReason = $null; StatusCode = $null; ErrorMessage = 'no SSE through this proxy' }
+            }
+            Mock -ModuleName SubtitleTools -CommandName Invoke-RestMethod -MockWith {
+                [PSCustomObject]@{
+                    choices = @([PSCustomObject]@{
+                        message       = [PSCustomObject]@{ content = '1|Recovered' }
+                        finish_reason = 'stop'
+                    })
+                    usage = [PSCustomObject]@{ prompt_tokens = 20; completion_tokens = 10 }
+                    model = 'google/gemini-3.8-flash'
+                }
+            }
+
+            $result = InModuleScope SubtitleTools -Parameters @{ helper = $StreamHelper } {
+                param($helper)
+                & ([scriptblock]::Create($helper)) $false
+            }
+
+            # Streaming is a progress nicety - it must never be why a translation fails.
+            $result.Entries[0].Lines[0] | Should -Be 'Recovered'
+            Should -Invoke -ModuleName SubtitleTools -CommandName Invoke-TranslationApiStream -Times 1 -Exactly
+            Should -Invoke -ModuleName SubtitleTools -CommandName Invoke-RestMethod -Times 1 -Exactly
+        }
+    }
+
+    Context 'Live progress reporting' {
+        It 'Counts only newline-terminated numbered lines, and flags estimated token counts' {
+            Mock -ModuleName SubtitleTools -CommandName Invoke-TranslationApiStream -MockWith {
+                if ($OnDelta) {
+                    & $OnDelta "1|alpha"          @{ InputTokens = 0; OutputTokens = 0 }   # line 1 incomplete
+                    & $OnDelta "1|alpha`n2|be"    @{ InputTokens = 0; OutputTokens = 0 }   # line 1 done
+                    & $OnDelta "1|alpha`n2|beta`n" @{ InputTokens = 7; OutputTokens = 9 }  # both done, real usage
+                }
+                @{ Success = $true; Content = "1|alpha`n2|beta`n"; InputTokens = 7; OutputTokens = 9
+                   FinishReason = 'stop'; StatusCode = 200; ErrorMessage = $null }
+            }
+
+            $reports = InModuleScope SubtitleTools {
+                $seen = [System.Collections.Generic.List[hashtable]]::new()
+
+                $provider         = [TranslationProvider]::new()
+                $provider.Name    = 'OpenRouter'
+                $provider.Model   = 'm'
+                $provider.BaseUrl = 'https://openrouter.test/api/v1'
+                $key = ConvertTo-SecureString 'k' -AsPlainText -Force
+
+                Invoke-TranslationBatchRequest -Texts @('a', 'b') -Provider $provider -ApiKey $key `
+                    -TargetLanguage 'fa' -OnLiveProgress { param($live) $seen.Add($live) } | Out-Null
+
+                , $seen.ToArray()
+            }
+
+            # The throttle drops updates less than 200ms apart, so only the count and
+            # shape of what does get through is asserted, not how many arrived.
+            $reports.Count      | Should -BeGreaterThan 0
+            $reports[0].LinesDone       | Should -Be 0      # "1|alpha" has no newline yet
+            $reports[0].Expected        | Should -Be 2
+            $reports[0].Depth           | Should -Be 0
+            $reports[0].OutputEstimated | Should -BeTrue    # no usage reported yet
+        }
     }
 }

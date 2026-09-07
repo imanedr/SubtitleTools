@@ -1,5 +1,5 @@
 @{
-    ModuleVersion        = '1.1.0'
+    ModuleVersion        = '1.2.0'
     GUID                 = 'a3f2e1d0-4b5c-6d7e-8f9a-0b1c2d3e4f50'
     Author               = 'Iman Edrisian'
     Copyright            = '(c) 2025 Iman Edrisian. All rights reserved.'
@@ -90,6 +90,26 @@
             # Kept in sync with CHANGELOG.md by hand: PSGallery reads ReleaseNotes,
             # GitHub readers read CHANGELOG.md. Update both together.
             ReleaseNotes = @'
+Version 1.2.0
+
+- Fixed long files being silently translated only part-way. Batches were sized
+  only by character budget, so a short file went out as one call asking for
+  hundreds of translated lines; the reply hit the output-token cap and stopped
+  early, and because a truncated reply is an HTTP 200 with
+  finish_reason=length, the missing entries quietly fell back to untranslated
+  source text. Truncation is now detected on every provider, and unreturned
+  entries are re-requested in smaller batches instead of being given up on
+- Fixed untranslated fallback text being written to the translation cache,
+  which made it a permanent cache hit that a re-run or resume could not repair
+- Added streaming translation: the progress bar now advances per translated
+  line with live token counts while a batch is still being written, on all
+  four providers. Falls back to a buffered request automatically; -NoStream
+  opts out
+- Added the MaxEntriesPerBatch provider setting (default 40), capping how many
+  entries go into a single API call
+- Raised the default MaxOutputTokens from 8192 to 16384, since reasoning
+  models spend part of that budget on thinking tokens
+
 Version 1.1.0
 
 - Fixed a PowerShell 5.1 parse error (the ?? operator) that broke Import-Module

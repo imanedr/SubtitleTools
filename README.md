@@ -25,6 +25,8 @@ Parse, validate, repair, sync, convert, and AI-translate subtitles — all from 
   - [Content-Aware Translation (Priming)](#content-aware-translation-priming)
   - [Using a Glossary](#using-a-glossary)
   - [Sessions, Caching & Resume](#sessions-caching--resume)
+  - [Progress & Live Output](#progress--live-output)
+  - [Batch Size & Truncated Responses](#batch-size--truncated-responses)
   - [Back-Translation Verification](#back-translation-verification)
   - [Post-Translation Line Wrapping](#post-translation-line-wrapping)
 - [Batch Processing](#batch-processing)
@@ -100,7 +102,7 @@ Install-Module -Name SubtitleTools -Scope CurrentUser
 ```powershell
 # Copy the module files into a version-named folder on your module path
 Copy-Item -Path '.\SubtitleTools\*' `
-    -Destination "$([Environment]::GetFolderPath('MyDocuments'))\PowerShell\Modules\SubtitleTools\1.1.0" `
+    -Destination "$([Environment]::GetFolderPath('MyDocuments'))\PowerShell\Modules\SubtitleTools\1.2.0" `
     -Recurse
 ```
 
@@ -412,6 +414,49 @@ Import-SubtitleFile 'long_ep01.srt' |
 Import-SubtitleFile 'long_ep01.srt' |
     Invoke-SubtitleTranslation -TargetLanguage 'fa' -ProviderName Anthropic `
         -ResumeFrom './checkpoint.json' -OutputPath 'ep01.fa.srt'
+```
+
+### Progress & Live Output
+
+Translation streams by default, so the progress bar advances **per translated line** with live token counts while a batch is still being written — rather than sitting still and then jumping once the whole batch arrives:
+
+```
+Translating to 'fa' via OpenRouter (google/gemini-3.8-flash)
+Batch 3/8 | Translating 27/40 | 107/294 entries | 12.4k/~9.1k tok
+  36% [###########.....................................]
+```
+
+`~` marks an estimated output-token count. OpenAI-compatible endpoints only report real usage in the final chunk of a stream, so until it arrives the figure is a characters/4 approximation rather than a measurement.
+
+If a proxy or gateway in front of your provider does not pass server-sent events through cleanly, streaming degrades on its own — the request is simply re-sent as a normal buffered call and the translation is unaffected. To skip the attempt entirely:
+
+```powershell
+Invoke-SubtitleTranslation -Path 'movie.srt' -TargetLanguage 'fa' -ProviderName OpenRouter -NoStream
+```
+
+### Batch Size & Truncated Responses
+
+Two settings control how much work goes into a single API call:
+
+| Setting | Default | Bounds |
+|---|---|---|
+| `MaxTokensPerBatch` | 4000 | How much the model has to **read** (input packing, estimated at ~4 chars/token) |
+| `MaxEntriesPerBatch` | 40 | How many entries the model has to **write** per call |
+| `MaxOutputTokens` | 16384 | The provider's output-token cap for the response |
+
+`MaxEntriesPerBatch` is the one worth knowing about. A short file fits the character budget whole, so without it the module would ask a model for hundreds of translated lines in a single response — which is where truncation and line-numbering drift come from.
+
+When a response does come back short, the missing entries are automatically re-requested in progressively smaller batches, so a truncated reply repairs itself. Only if that still fails does an entry keep its source text, and you'll see:
+
+```
+WARNING: 12 of 294 entries could not be translated and kept their source text.
+```
+
+That usually means the model is running out of output budget. **Reasoning models are the common cause** — their thinking tokens are billed against `MaxOutputTokens`, so a budget that looks generous for the answer alone can be spent before the answer starts. Give it more room, or ask for less per call:
+
+```powershell
+Set-TranslationProvider -Name OpenRouter -MaxOutputTokens 32768
+Set-TranslationProvider -Name OpenRouter -MaxEntriesPerBatch 20
 ```
 
 ### Back-Translation Verification

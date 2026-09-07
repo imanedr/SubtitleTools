@@ -21,6 +21,9 @@ function Invoke-TranslationProviderAdapter {
         The decrypted API key as a SecureString.
     .PARAMETER MaxRetries
         Forwarded to the underlying adapter's retry loop.
+    .PARAMETER StreamCallback
+        Optional. Forwarded to the adapter, which then attempts the streaming path so
+        the caller can report progress mid-response.
     .OUTPUTS
         PSCustomObject: Content, InputTokens, OutputTokens, FinishReason, Model, RetryCount
     #>
@@ -38,25 +41,28 @@ function Invoke-TranslationProviderAdapter {
         [Parameter(Mandatory)]
         [SecureString] $ApiKey,
 
-        [int] $MaxRetries = 3
+        [int] $MaxRetries = 3,
+
+        # Forwarded to the adapter; see the adapters' own -StreamCallback notes.
+        [scriptblock] $StreamCallback
     )
 
     switch ($Provider.Name) {
         'Anthropic' {
             return Invoke-AnthropicTranslation -SystemPrompt $SystemPrompt -UserContent $UserContent `
-                -Provider $Provider -ApiKey $ApiKey -MaxRetries $MaxRetries
+                -Provider $Provider -ApiKey $ApiKey -MaxRetries $MaxRetries -StreamCallback $StreamCallback
         }
         'OpenAI' {
             return Invoke-OpenAITranslation -SystemPrompt $SystemPrompt -UserContent $UserContent `
-                -Provider $Provider -ApiKey $ApiKey -MaxRetries $MaxRetries
+                -Provider $Provider -ApiKey $ApiKey -MaxRetries $MaxRetries -StreamCallback $StreamCallback
         }
         'Google' {
             return Invoke-GoogleTranslation -SystemPrompt $SystemPrompt -UserContent $UserContent `
-                -Provider $Provider -ApiKey $ApiKey -MaxRetries $MaxRetries
+                -Provider $Provider -ApiKey $ApiKey -MaxRetries $MaxRetries -StreamCallback $StreamCallback
         }
         'OpenRouter' {
             return Invoke-OpenRouterTranslation -SystemPrompt $SystemPrompt -UserContent $UserContent `
-                -Provider $Provider -ApiKey $ApiKey -MaxRetries $MaxRetries
+                -Provider $Provider -ApiKey $ApiKey -MaxRetries $MaxRetries -StreamCallback $StreamCallback
         }
         default {
             throw "Invoke-TranslationProviderAdapter: unknown translation provider '$($Provider.Name)'. Supported providers: Anthropic, OpenAI, Google, OpenRouter."

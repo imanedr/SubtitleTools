@@ -19,7 +19,12 @@ function Invoke-GoogleTranslation {
         [Parameter(Mandatory)]
         [SecureString] $ApiKey,
 
-        [int] $MaxRetries = 3
+        [int] $MaxRetries = 3,
+
+        # When supplied, the call is attempted over the streaming path first so the
+        # caller can report progress while the model is still writing; any streaming
+        # failure falls back to the buffered request below.
+        [scriptblock] $StreamCallback
     )
 
     $plainKey = [System.Net.NetworkCredential]::new('', $ApiKey).Password
@@ -47,6 +52,16 @@ function Invoke-GoogleTranslation {
     }
 
     $uri = '{0}/models/{1}:generateContent' -f $Provider.BaseUrl, $Provider.Model
+
+    if ($StreamCallback) {
+        # Gemini streams from a different method name entirely, and needs alt=sse to
+        # emit server-sent events rather than a JSON array.
+        $streamUri = '{0}/models/{1}:streamGenerateContent?alt=sse' -f $Provider.BaseUrl, $Provider.Model
+        $streamed  = Invoke-TranslationStreamAttempt -Uri $streamUri -Headers $headers -Body $body `
+            -Shape 'Google' -ProviderLabel 'Google' -Model $Provider.Model `
+            -StreamCallback $StreamCallback -JsonDepth 8
+        if ($streamed) { return $streamed }
+    }
 
     $result = Invoke-TranslationApiRequest -Uri $uri -Method Post `
         -Body $body -Headers $headers -ProviderLabel 'Google' -MaxRetries $MaxRetries -JsonDepth 8

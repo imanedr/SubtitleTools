@@ -1,7 +1,7 @@
 # SubtitleTools — Module Design & Architecture
 
 **Author:** Iman Edrisian  
-**Version:** 1.1.0  
+**Version:** 1.2.0  
 **Target:** PowerShell 5.1+ (Desktop & Core)
 
 ---
@@ -91,7 +91,23 @@ Output: [PSCustomObject]
     .Model         [string]
 ```
 
-**Batch packing:** entries are grouped into batches up to `MaxTokensPerBatch * 4` characters (1 token ≈ 4 chars). Within each batch, entries are sent as numbered lines (`N|text`) and intra-entry line breaks are encoded as `<NL>`. The response is parsed by splitting on the first pipe only, validated by index. If the response entry count doesn't match the input, the batch falls back to source text for mismatched entries.
+**Batch packing:** entries are grouped into batches bounded by *two* limits, and the batch plan is computed up front so progress can report a real `Batch 3/8`:
+
+- `MaxTokensPerBatch * 4` characters (1 token ≈ 4 chars) — an *input* heuristic.
+- `MaxEntriesPerBatch` entries (default 40) — an *output* bound.
+
+The second limit matters more than it looks. A short file fits the character budget whole, so without an entry cap the module would ask a model for several hundred translated lines in one response — which invites both output truncation and line-numbering drift. `MaxEntriesPerBatch` is what keeps a single response to a size models reliably complete.
+
+Within each batch, entries are sent as numbered lines (`N|text`) and intra-entry line breaks are encoded as `<NL>`. The response is parsed by splitting on the first pipe only, validated by index.
+
+**Recovering an incomplete response** (`Invoke-TranslationBatchRequest`): entries the response fails to return are not written off. They are re-requested, halving the request at each level up to `MaxSplitDepth` (default 3). This covers the two ways a response comes back short:
+
+- *Truncation.* The model hit its output-token cap. On a reasoning model the thinking tokens are billed against that same cap, so a budget sized for the visible answer alone can be exhausted before the answer starts. Providers spell this three different ways (`length`, `max_tokens`, `MAX_TOKENS`) — `Test-TranslationTruncated` normalises them. Critically, a truncated response is an HTTP 200, so nothing throws and it must be checked for explicitly. The last parsed line of a truncated response is also discarded, since generation stopped mid-token and that line may be half-written.
+- *Numbering drift.* On a long numbered list a model can skip, duplicate, or renumber lines.
+
+Only after the retries are exhausted does an entry fall back to source text — and that is reported on the warning stream, because a partially translated subtitle file opens and plays normally and nothing else would reveal it. Fallback text is deliberately **not** cached: caching it would make it a permanent cache hit that no re-run or checkpoint resume could repair.
+
+**Streaming** (`Invoke-TranslationApiStream`): translation calls use server-sent events by default, so the caller can report progress while the model is still writing rather than only when the batch lands. Built on `System.Net.Http.HttpClient` with `ResponseHeadersRead` — the one HTTP client that can hand back a response stream before the body completes on *both* Windows PowerShell 5.1 Desktop and PowerShell 7 (`Invoke-RestMethod` buffers on both). Each provider's event schema is decoded by `-Shape` (`OpenAI` covers OpenRouter too). `Invoke-TranslationStreamAttempt` owns the degradation policy: a 4xx other than 429 is reported as an error, while 429/5xx and any transport failure return `$null` so the caller falls back to the buffered path. Streaming is a progress nicety and is never allowed to be the reason a translation fails; `-NoStream` disables it outright.
 
 **Rate limiting:** a sliding window tracks requests per minute per session. When `RateLimitRpm` is approached, the function sleeps until the window resets.
 
