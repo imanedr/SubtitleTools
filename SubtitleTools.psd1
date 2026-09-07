@@ -1,5 +1,5 @@
 @{
-    ModuleVersion        = '1.2.0'
+    ModuleVersion        = '1.3.0'
     GUID                 = 'a3f2e1d0-4b5c-6d7e-8f9a-0b1c2d3e4f50'
     Author               = 'Iman Edrisian'
     Copyright            = '(c) 2025 Iman Edrisian. All rights reserved.'
@@ -8,6 +8,7 @@
     CompatiblePSEditions = @('Desktop', 'Core')
 
     RootModule           = 'SubtitleTools.psm1'
+    FormatsToProcess     = @('SubtitleTools.format.ps1xml')
 
     FunctionsToExport    = @(
         # Core I/O
@@ -90,6 +91,19 @@
             # Kept in sync with CHANGELOG.md by hand: PSGallery reads ReleaseNotes,
             # GitHub readers read CHANGELOG.md. Update both together.
             ReleaseNotes = @'
+Version 1.3.0
+
+- Added an end-of-run translation summary. Finishing a translation now reports
+  the provider and model, how many entries were translated / served from cache
+  / left unresolved, batches, API calls, retries, truncated batches, input and
+  output token totals, and elapsed time. The same data is attached to the
+  returned file as .TranslationSummary for scripting; -NoSummary suppresses
+  only the printed block
+- Added display formatting for SubtitleFile, which previously rendered by
+  dumping its entire Entries array - so importing or translating a subtitle
+  answered with a wall of truncated dialogue instead of a description of the
+  file
+
 Version 1.2.0
 
 - Fixed long files being silently translated only part-way. Batches were sized

@@ -64,6 +64,11 @@
         batch is still being translated, instead of jumping only once the whole batch
         lands. Use this if a proxy or gateway in front of the provider does not pass
         server-sent events through cleanly. Translation output is identical either way.
+    .PARAMETER NoSummary
+        Suppress the end-of-run summary block printed to the console (provider, model,
+        entry/cache/unresolved counts, batches, API calls, retries, token usage, elapsed
+        time). The same data is always available on the returned object's
+        .TranslationSummary property regardless of this switch.
     .PARAMETER ProgressParentId
         Id of a caller's Write-Progress bar to nest this function's progress under
         (via -ParentId). This function's own bar uses -Id 2 and the priming phase
@@ -131,6 +136,8 @@
         [string] $SystemPromptPath,
 
         [switch] $NoStream,
+
+        [switch] $NoSummary,
 
         [int] $ProgressParentId
     )
@@ -249,6 +256,8 @@
         $totalRetries      = 0
         $totalApiCalls     = 0
         $totalUnresolved   = 0
+        $totalCacheHits    = 0
+        $truncatedBatches  = 0
 
         $translateBatch = {
             param($batchEntries, $prov, $key, $src, $tgt, $glossary, $cache, $contentCtx, $promptPath, $logPath, $onProgress, $onLiveProgress)
@@ -262,6 +271,7 @@
             $retryCount   = 0
             $apiCalls     = 0
             $unresolved   = 0
+            $truncated    = $false
 
             for ($idx = 0; $idx -lt $texts.Count; $idx++) {
                 $hash = ([System.Security.Cryptography.MD5]::Create().ComputeHash(
@@ -297,6 +307,7 @@
                 $outputTokens = $req.OutputTokens
                 $retryCount   = $req.RetryCount
                 $apiCalls     = $req.ApiCalls
+                $truncated    = [bool] $req.Truncated
 
                 for ($r = 0; $r -lt $toTranslate.Count; $r++) {
                     $origIdx = $toTranslate[$r]
@@ -333,6 +344,8 @@
                 RetryCount   = $retryCount
                 ApiCalls     = $apiCalls
                 Unresolved   = $unresolved
+                Truncated    = $truncated
+                CacheHits    = $texts.Count - $toTranslate.Count
             }
         }
 
@@ -357,9 +370,13 @@
         $batches      = [System.Collections.Generic.List[object]]::new()
         $pendingBatch = [System.Collections.Generic.List[SubtitleEntry]]::new()
         $batchChars   = 0
+        # Reported in the run summary. Counted on the raw text, not on the '<NL>'-joined
+        # wire form, so it is the number of characters actually in the subtitle.
+        $sourceChars  = 0
 
         foreach ($entry in $allEntries) {
-            $entryChars = ($entry.Lines -join '<NL>').Length
+            $entryChars   = ($entry.Lines -join '<NL>').Length
+            $sourceChars += ($entry.Lines -join "`n").Length
 
             $overflowsChars   = ($batchChars + $entryChars) -gt $maxChars
             $overflowsEntries = $pendingBatch.Count -ge $maxEntries
@@ -466,7 +483,9 @@
             $totalRetries      += $batchOutcome.RetryCount
             $totalApiCalls     += $batchOutcome.ApiCalls
             $totalUnresolved   += $batchOutcome.Unresolved
+            $totalCacheHits    += $batchOutcome.CacheHits
             $rpmCount          += $batchOutcome.ApiCalls
+            if ($batchOutcome.Truncated) { $truncatedBatches++ }
 
             for ($r = 0; $r -lt $currentBatch.Count; $r++) {
                 $srcEntry = $currentBatch[$r]
@@ -498,22 +517,81 @@
 
         $translated.Entries = $translatedEntries.ToArray()
 
+        # --- Run summary ---
+        # Everything the run learned that is not in the subtitle itself: what was
+        # actually sent where, what it cost, and how much of it came back. Attached to
+        # the returned file so it survives into a variable, a log, or a batch report -
+        # the printed block below is only a rendering of this object.
+        $runElapsed = [datetime]::UtcNow - $overallStart
+
+        $outputChars = 0
+        foreach ($te in $translatedEntries) { $outputChars += ($te.Lines -join "`n").Length }
+
+        $ctx = $Session.ContentContext
+
+        $summary = [PSCustomObject]@{
+            PSTypeName        = 'SubtitleTools.TranslationSummary'
+            Provider          = $provider.Name
+            Model             = $provider.Model
+            SourceLanguage    = $(if ($SourceLanguage) { $SourceLanguage } else { 'auto-detect' })
+            TargetLanguage    = $TargetLanguage
+            SourcePath        = $InputObject.Path
+            OutputPath        = $OutputPath
+            Format            = $translated.Format
+            Encoding          = $translated.Encoding
+            Entries           = $totalEntries
+            # Newly translated by the API, i.e. neither served from cache nor left as
+            # source text - the three counts add up to the entries actually processed.
+            TranslatedEntries = $doneEntries - $totalCacheHits - $totalUnresolved
+            CachedEntries     = $totalCacheHits
+            UnresolvedEntries = $totalUnresolved
+            SourceCharacters  = $sourceChars
+            OutputCharacters  = $outputChars
+            Batches           = $totalBatches
+            ApiCalls          = $totalApiCalls
+            Retries           = $totalRetries
+            TruncatedBatches  = $truncatedBatches
+            InputTokens       = $totalInputTokens
+            OutputTokens      = $totalOutputTokens
+            TotalTokens       = $totalInputTokens + $totalOutputTokens
+            Streaming         = (-not $NoStream)
+            Primed            = ($null -ne $ctx)
+            ContentType       = $(if ($ctx) { $ctx.ContentType }  else { $null })
+            ContentTitle      = $(if ($ctx) { $ctx.ContentTitle } else { $null })
+            Tone              = $(if ($ctx) { $ctx.DominantTone } else { $null })
+            GlossaryTerms     = $(if ($Session.Glossary) { $Session.Glossary.Count } else { 0 })
+            Duration          = $runElapsed
+            EntriesPerMinute  = $(if ($runElapsed.TotalSeconds -gt 0) { [int]($doneEntries / $runElapsed.TotalSeconds * 60) } else { 0 })
+            StartedAt         = $overallStart.ToLocalTime()
+            CompletedAt       = [datetime]::UtcNow.ToLocalTime()
+        }
+
+        $translated | Add-Member -NotePropertyName TranslationSummary -NotePropertyValue $summary -Force
+
         $tokenSummary = "$(& $formatCount $totalInputTokens)/$(& $formatCount $totalOutputTokens) tok"
         $retrySuffix  = if ($totalRetries -gt 0) { " Retries: $totalRetries." } else { '' }
-        Write-SubtitleLog -Message "Translation complete. $($translated.Entries.Count) entries in $totalBatches batch(es), $totalApiCalls API call(s). Provider: $($provider.Name) / $($provider.Model). Tokens: $tokenSummary.$retrySuffix" `
+        $cacheSuffix  = if ($totalCacheHits -gt 0) { " Cache hits: $totalCacheHits." } else { '' }
+        Write-SubtitleLog -Message "Translation complete. $($translated.Entries.Count) entries in $totalBatches batch(es), $totalApiCalls API call(s), $([int]$runElapsed.TotalSeconds)s. Provider: $($provider.Name) / $($provider.Model). Tokens: $tokenSummary.$retrySuffix$cacheSuffix" `
             -LogPath $LogPath
+
+        if ($OutputPath -and $PSCmdlet.ShouldProcess($OutputPath, 'Save translated subtitle')) {
+            Export-SubtitleFile -InputObject $translated -Path $OutputPath
+        }
+
+        # Under -WhatIf no batch actually ran, so a summary of the run would be a
+        # summary of nothing.
+        if (-not $NoSummary -and -not $WhatIfPreference) {
+            Write-TranslationSummary -Summary $summary
+        }
 
         # A partially-translated file is the failure mode most likely to go unnoticed:
         # it opens fine, plays fine, and only the untranslated tail gives it away. Say
-        # so loudly on the warning stream, not just in the log file.
+        # so loudly on the warning stream, not just in the log file - and last, so the
+        # fix is the final thing on screen.
         if ($totalUnresolved -gt 0) {
             Write-Warning ("{0} of {1} entries could not be translated and kept their source text. " -f $totalUnresolved, $totalEntries +
                 "This usually means the model's output was cut short. Try a lower -MaxEntriesPerBatch or a higher -MaxOutputTokens: " +
                 "Set-TranslationProvider -Name $($provider.Name) -MaxEntriesPerBatch 20")
-        }
-
-        if ($OutputPath -and $PSCmdlet.ShouldProcess($OutputPath, 'Save translated subtitle')) {
-            Export-SubtitleFile -InputObject $translated -Path $OutputPath
         }
 
         return $translated

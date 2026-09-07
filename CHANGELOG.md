@@ -5,6 +5,44 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.3.0] - 2026-09-06
+
+### Added
+
+- **End-of-run translation summary.** A finished translation returned a
+  `SubtitleFile` and nothing else, so everything the run had learned — which
+  provider and model actually served it, how many entries came from cache,
+  how many were left untranslated, how many API calls and retries it took,
+  what it cost in tokens, how long it ran — was discarded the moment the
+  function returned. That information is now collected into a
+  `SubtitleTools.TranslationSummary` object, printed as a summary block and
+  attached to the returned file as `.TranslationSummary`:
+
+  ```powershell
+  $result = Invoke-SubtitleTranslation -Path 'ep01.srt' -TargetLanguage 'fa' -ProviderName OpenRouter
+  $result.TranslationSummary.TotalTokens
+  $result.TranslationSummary.UnresolvedEntries
+  ```
+
+  The printed block degrades to ASCII glyphs when the console is not UTF-8, so
+  it stays readable on a legacy Windows PowerShell host.
+- `-NoSummary` on `Invoke-SubtitleTranslation`, which suppresses the printed
+  block only. The `.TranslationSummary` property is attached either way.
+
+### Changed
+
+- **`SubtitleFile` now has display formatting** (`SubtitleTools.format.ps1xml`,
+  registered through the manifest's `FormatsToProcess`). Previously it rendered
+  by dumping every property, including the whole `Entries` array, so importing
+  or translating a 300-line subtitle answered with a screenful of truncated
+  dialogue rather than a description of the file. It now shows path, format,
+  encoding, entry count, total duration, parser-warning count, and — when
+  present — a one-line translation summary. No property is hidden; they all
+  remain directly accessible and `Format-List *` still shows everything.
+- `Invoke-BackTranslation` passes `-NoSummary` to its internal back-translation
+  pass, so a verification run no longer prints a "Translation complete" block
+  for work the caller did not ask for directly.
+
 ## [1.2.0] - 2026-09-06
 
 ### Fixed

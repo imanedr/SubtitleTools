@@ -64,11 +64,15 @@ function Invoke-BackTranslation {
     # -ProgressParentId 1 nests Invoke-SubtitleTranslation's own bar (-Id 2, and
     # its priming phase at -Id 3) beneath this function's bar instead of the two
     # colliding at the same top-level id.
+    # -NoSummary: the back-translation is an internal verification pass, not the
+    # caller's deliverable. Printing "Translation complete" here would describe work
+    # the caller did not ask for, above the similarity report that they did.
     $backTranslated = Invoke-SubtitleTranslation `
         -InputObject $TranslatedFile `
         -TargetLanguage $BackLanguage `
         -Session $Session `
-        -ProgressParentId 1
+        -ProgressParentId 1 `
+        -NoSummary
 
     Write-Progress -Id 1 -Activity 'Back-translation verification' -Status 'Comparing...' -PercentComplete 80
 

@@ -329,7 +329,7 @@ Describe 'Invoke-SubtitleTranslation checkpoint-on-failure and token aggregation
             $e3.Index = 3; $e3.Start = [TimeSpan]::FromSeconds(2);    $e3.End = [TimeSpan]::FromSeconds(3); $e3.Lines = @('Third line of dialogue')
             $file.Entries = @($e1, $e2, $e3)
 
-            { Invoke-SubtitleTranslation -InputObject $file -TargetLanguage 'fa' -Session $session -NoStream } |
+            { Invoke-SubtitleTranslation -InputObject $file -TargetLanguage 'fa' -Session $session -NoStream -NoSummary } |
                 Should -Throw -ExpectedMessage '*API call failed*'
 
             Test-Path $checkpointPath | Should -BeTrue
@@ -383,7 +383,7 @@ Describe 'Invoke-SubtitleTranslation checkpoint-on-failure and token aggregation
             $e2.Index = 2; $e2.Start = [TimeSpan]::FromSeconds(1); $e2.End = [TimeSpan]::FromSeconds(2); $e2.Lines = @('Second line of dialogue')
             $file.Entries = @($e1, $e2)
 
-            $result = Invoke-SubtitleTranslation -InputObject $file -TargetLanguage 'fa' -Session $session -LogPath $logPath -NoStream
+            $result = Invoke-SubtitleTranslation -InputObject $file -TargetLanguage 'fa' -Session $session -LogPath $logPath -NoStream -NoSummary
 
             $result.Entries.Count | Should -Be 2
 
@@ -471,7 +471,10 @@ Describe 'Truncated-response recovery' {
             # request to the fake host and only then fall back - correct behaviour,
             # but it makes the test depend on a DNS failure. Streaming is covered
             # separately, against a mocked Invoke-TranslationApiStream.
-            $result = Invoke-SubtitleTranslation -InputObject $file -TargetLanguage 'fa' -Session $session -NoStream
+            # -NoSummary only keeps the end-of-run console block out of the Pester
+            # transcript; the summary object is attached either way and is covered by
+            # the 'Translation run summary' Describe below.
+            $result = Invoke-SubtitleTranslation -InputObject $file -TargetLanguage 'fa' -Session $session -NoStream -NoSummary
             return @{ Result = $result; Session = $session }
         }.ToString()
     }
@@ -614,6 +617,202 @@ Describe 'Truncated-response recovery' {
     }
 }
 
+Describe 'Translation run summary' {
+    # The run's own facts - provider, batches, API calls, tokens, what came from
+    # cache, what never came back - are not recoverable from the translated file, so
+    # they are attached to it as .TranslationSummary and rendered as a console block.
+
+    BeforeAll {
+        # Source text, rebuilt inside InModuleScope - see the NOTE at the top of file.
+        $SummaryHelper = {
+            param($entryCount, $maxEntriesPerBatch, $existingSession, [switch] $ShowSummary)
+
+            if ($existingSession) {
+                $session = $existingSession
+            } else {
+                $provider                    = [TranslationProvider]::new()
+                $provider.Name               = 'OpenRouter'
+                $provider.Model              = 'google/gemini-3.8-flash'
+                $provider.BaseUrl            = 'https://openrouter.test/api/v1'
+                $provider.MaxTokensPerBatch  = 10000
+                $provider.MaxEntriesPerBatch = $maxEntriesPerBatch
+                $provider.RateLimitRpm       = 0
+                $provider.ApiKeyEncrypted    = 'placeholder-since-Unprotect-ApiKey-is-mocked'
+
+                $session = @{
+                    Provider       = $provider
+                    Glossary       = @{}
+                    Cache          = @{}
+                    CheckpointPath = $null
+                    ContentContext = $null
+                }
+            }
+
+            $file        = [SubtitleFile]::new()
+            $file.Format = 'SRT'
+            $entries     = foreach ($i in 1..$entryCount) {
+                $e = [SubtitleEntry]::new()
+                $e.Index = $i
+                $e.Start = [TimeSpan]::FromSeconds($i)
+                $e.End   = [TimeSpan]::FromSeconds($i + 1)
+                $e.Lines = @("Source line $i")
+                $e
+            }
+            $file.Entries = @($entries)
+
+            $params = @{
+                InputObject    = $file
+                TargetLanguage = 'fa'
+                Session        = $session
+                NoStream       = $true
+            }
+            if (-not $ShowSummary) { $params['NoSummary'] = $true }
+
+            $result = Invoke-SubtitleTranslation @params
+            return @{ Result = $result; Session = $session }
+        }.ToString()
+    }
+
+    BeforeEach {
+        Mock -ModuleName SubtitleTools -CommandName Start-Sleep     -MockWith { }
+        Mock -ModuleName SubtitleTools -CommandName Unprotect-ApiKey -MockWith { 'fake-plain-key' }
+    }
+
+    Context 'A run that completes normally' {
+        BeforeEach {
+            Mock -ModuleName SubtitleTools -CommandName Invoke-RestMethod -MockWith {
+                $request   = [System.Text.Encoding]::UTF8.GetString($Body) | ConvertFrom-Json
+                $requested = @($request.messages[1].content -split "`n").Count
+
+                [PSCustomObject]@{
+                    choices = @([PSCustomObject]@{
+                        message       = [PSCustomObject]@{ content = ((1..$requested | ForEach-Object { "$_|XLAT-$_" }) -join "`n") }
+                        finish_reason = 'stop'
+                    })
+                    usage = [PSCustomObject]@{ prompt_tokens = 10; completion_tokens = 5 }
+                    model = 'google/gemini-3.8-flash'
+                }
+            }
+        }
+
+        It 'Attaches a TranslationSummary describing the provider, the work done, and the tokens spent' {
+            InModuleScope SubtitleTools -Parameters @{ helper = $SummaryHelper } {
+                param($helper)
+                $outcome = & ([scriptblock]::Create($helper)) 10 3
+                $s = $outcome.Result.TranslationSummary
+
+                $s | Should -Not -BeNullOrEmpty
+                $s.PSObject.TypeNames | Should -Contain 'SubtitleTools.TranslationSummary'
+
+                $s.Provider          | Should -Be 'OpenRouter'
+                $s.Model             | Should -Be 'google/gemini-3.8-flash'
+                $s.TargetLanguage    | Should -Be 'fa'
+                $s.SourceLanguage    | Should -Be 'auto-detect'
+                $s.Format            | Should -Be 'SRT'
+
+                $s.Entries           | Should -Be 10
+                $s.TranslatedEntries | Should -Be 10
+                $s.CachedEntries     | Should -Be 0
+                $s.UnresolvedEntries | Should -Be 0
+
+                # 10 entries capped at 3 per call = 4 batches, one API call each.
+                $s.Batches           | Should -Be 4
+                $s.ApiCalls          | Should -Be 4
+                $s.Retries           | Should -Be 0
+                $s.TruncatedBatches  | Should -Be 0
+
+                # 4 calls x 10 prompt / 5 completion tokens.
+                $s.InputTokens       | Should -Be 40
+                $s.OutputTokens      | Should -Be 20
+                $s.TotalTokens       | Should -Be 60
+
+                # 9 x 'Source line N' (13) + 'Source line 10' (14); each entry comes
+                # back as 'XLAT-n' (6). Counted on the text itself, never on the
+                # '<NL>'-joined wire form.
+                $s.SourceCharacters  | Should -Be 131
+                $s.OutputCharacters  | Should -Be 60
+
+                $s.Streaming         | Should -BeFalse   # -NoStream was passed
+                $s.Primed            | Should -BeFalse
+                $s.Duration          | Should -BeOfType [timespan]
+            }
+        }
+
+        It 'Counts entries served from the session cache separately from entries the API translated' {
+            InModuleScope SubtitleTools -Parameters @{ helper = $SummaryHelper } {
+                param($helper)
+                $run = [scriptblock]::Create($helper)
+
+                $first  = & $run 10 3
+                $second = & $run 10 3 $first.Session   # same session, same source text
+
+                $first.Result.TranslationSummary.CachedEntries      | Should -Be 0
+                $first.Result.TranslationSummary.TranslatedEntries  | Should -Be 10
+
+                # Every entry is already cached, so the second run must report zero
+                # API calls and zero tokens - not silently re-bill them.
+                $second.Result.TranslationSummary.CachedEntries     | Should -Be 10
+                $second.Result.TranslationSummary.TranslatedEntries | Should -Be 0
+                $second.Result.TranslationSummary.ApiCalls          | Should -Be 0
+                $second.Result.TranslationSummary.TotalTokens       | Should -Be 0
+                $second.Result.TranslationSummary.Batches           | Should -Be 4
+            }
+        }
+
+        It 'Prints the summary block by default and stays silent under -NoSummary' {
+            Mock -ModuleName SubtitleTools -CommandName Write-TranslationSummary -MockWith { }
+
+            InModuleScope SubtitleTools -Parameters @{ helper = $SummaryHelper } {
+                param($helper)
+                & ([scriptblock]::Create($helper)) 3 3 $null -ShowSummary | Out-Null
+            }
+            Should -Invoke -ModuleName SubtitleTools -CommandName Write-TranslationSummary -Times 1 -Exactly
+
+            InModuleScope SubtitleTools -Parameters @{ helper = $SummaryHelper } {
+                param($helper)
+                & ([scriptblock]::Create($helper)) 3 3 | Out-Null
+            }
+            # Still 1: the -NoSummary run must not have added a second call.
+            Should -Invoke -ModuleName SubtitleTools -CommandName Write-TranslationSummary -Times 1 -Exactly
+        }
+    }
+
+    It 'Reports unresolved entries and the truncated batch that caused them' {
+        # Truncated with nothing parseable in it, on every call including the retries,
+        # so the batch exhausts its split depth and gives up.
+        Mock -ModuleName SubtitleTools -CommandName Invoke-RestMethod -MockWith {
+            [PSCustomObject]@{
+                choices = @([PSCustomObject]@{
+                    message       = [PSCustomObject]@{ content = 'thinking about it' }
+                    finish_reason = 'length'
+                })
+                usage = [PSCustomObject]@{ prompt_tokens = 10; completion_tokens = 5 }
+                model = 'google/gemini-3.8-flash'
+            }
+        }
+
+        InModuleScope SubtitleTools -Parameters @{ helper = $SummaryHelper } {
+            param($helper)
+            $WarningPreference = 'SilentlyContinue'
+            $outcome = & ([scriptblock]::Create($helper)) 2 2
+            $s = $outcome.Result.TranslationSummary
+
+            $s.UnresolvedEntries | Should -Be 2
+            $s.TranslatedEntries | Should -Be 0
+            $s.TruncatedBatches  | Should -Be 1
+            # The initial call plus one single-entry retry per half.
+            $s.ApiCalls          | Should -Be 3
+        }
+    }
+
+    It 'Registers display formatting for SubtitleFile and the summary, so neither dumps raw properties' {
+        # Without FormatsToProcess a returned SubtitleFile renders its entire Entries
+        # array - which is what made the old end-of-run output unreadable.
+        (Get-FormatData -TypeName 'SubtitleFile')                        | Should -Not -BeNullOrEmpty
+        (Get-FormatData -TypeName 'SubtitleTools.TranslationSummary')    | Should -Not -BeNullOrEmpty
+    }
+}
+
 Describe 'Get-OpenRouterModel' {
     It 'Parses a mocked /models payload into the right shape, converting per-token prices to per-million' {
         Mock -ModuleName SubtitleTools -CommandName Invoke-RestMethod -MockWith {
@@ -725,9 +924,9 @@ Describe 'Streaming path' {
             $file.Entries = @($e)
 
             if ($noStream) {
-                Invoke-SubtitleTranslation -InputObject $file -TargetLanguage 'fa' -Session $session -NoStream
+                Invoke-SubtitleTranslation -InputObject $file -TargetLanguage 'fa' -Session $session -NoStream -NoSummary
             } else {
-                Invoke-SubtitleTranslation -InputObject $file -TargetLanguage 'fa' -Session $session
+                Invoke-SubtitleTranslation -InputObject $file -TargetLanguage 'fa' -Session $session -NoSummary
             }
         }.ToString()
     }

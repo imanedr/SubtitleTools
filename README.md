@@ -26,6 +26,7 @@ Parse, validate, repair, sync, convert, and AI-translate subtitles — all from 
   - [Using a Glossary](#using-a-glossary)
   - [Sessions, Caching & Resume](#sessions-caching--resume)
   - [Progress & Live Output](#progress--live-output)
+  - [Run Summary](#run-summary)
   - [Batch Size & Truncated Responses](#batch-size--truncated-responses)
   - [Back-Translation Verification](#back-translation-verification)
   - [Post-Translation Line Wrapping](#post-translation-line-wrapping)
@@ -102,7 +103,7 @@ Install-Module -Name SubtitleTools -Scope CurrentUser
 ```powershell
 # Copy the module files into a version-named folder on your module path
 Copy-Item -Path '.\SubtitleTools\*' `
-    -Destination "$([Environment]::GetFolderPath('MyDocuments'))\PowerShell\Modules\SubtitleTools\1.2.0" `
+    -Destination "$([Environment]::GetFolderPath('MyDocuments'))\PowerShell\Modules\SubtitleTools\1.3.0" `
     -Recurse
 ```
 
@@ -433,6 +434,48 @@ If a proxy or gateway in front of your provider does not pass server-sent events
 ```powershell
 Invoke-SubtitleTranslation -Path 'movie.srt' -TargetLanguage 'fa' -ProviderName OpenRouter -NoStream
 ```
+
+### Run Summary
+
+When a translation finishes, the facts about the run itself — which are not recoverable from the subtitle file — are printed as a summary block:
+
+```
+  ────────────────────────────────────────────────────────────────────
+  Translation complete
+  ────────────────────────────────────────────────────────────────────
+  Source    Mushoku Tensei - S03E02.srt  (SRT · UTF-8 · 294 entries)
+  Output    .\Downloads\Mushoku Tensei - S03E02.fa.srt
+  Language  en → fa
+  Provider  OpenRouter · google/gemini-3.8-flash
+  Context   animation · "Mushoku Tensei" · mixed tone   (primed)
+  Glossary  14 terms
+
+  Entries   282 translated · 12 from cache · 0 unresolved
+  Requests  8 batches · 9 API calls · 1 retry · 1 truncated
+  Tokens    12.4k in · 18.9k out · 31.3k total
+  Elapsed   3m 41s · 80 entries/min
+  Text      10,060 → 11,842 chars
+  ────────────────────────────────────────────────────────────────────
+```
+
+The same data is attached to the returned object as `.TranslationSummary`, so it survives into a variable, a log, or a batch report:
+
+```powershell
+$result = Invoke-SubtitleTranslation -Path 'ep01.srt' -TargetLanguage 'fa' -ProviderName OpenRouter -OutputPath 'ep01.fa.srt'
+
+$result.TranslationSummary.TotalTokens        # 31300
+$result.TranslationSummary.UnresolvedEntries  # 0
+$result.TranslationSummary.ApiCalls           # 9
+
+# Cost a season, from the token totals of each episode
+Get-ChildItem *.srt | ForEach-Object {
+    (Invoke-SubtitleTranslation -Path $_ -TargetLanguage 'fa' -ProviderName OpenRouter -NoSummary).TranslationSummary
+} | Measure-Object -Property TotalTokens -Sum
+```
+
+Full property list: `Provider`, `Model`, `SourceLanguage`, `TargetLanguage`, `SourcePath`, `OutputPath`, `Format`, `Encoding`, `Entries`, `TranslatedEntries`, `CachedEntries`, `UnresolvedEntries`, `SourceCharacters`, `OutputCharacters`, `Batches`, `ApiCalls`, `Retries`, `TruncatedBatches`, `InputTokens`, `OutputTokens`, `TotalTokens`, `Streaming`, `Primed`, `ContentType`, `ContentTitle`, `Tone`, `GlossaryTerms`, `Duration`, `EntriesPerMinute`, `StartedAt`, `CompletedAt`.
+
+Use `-NoSummary` to suppress the printed block; the `.TranslationSummary` property is attached either way.
 
 ### Batch Size & Truncated Responses
 

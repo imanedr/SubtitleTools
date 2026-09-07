@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Display formatting for SubtitleTools types.
+
+  Without this, a SubtitleFile renders by dumping every property, including the
+  entire Entries array - so importing or translating a 300-line subtitle answers
+  with a wall of truncated dialogue instead of telling you what the file is.
+  Nothing is hidden by these views: every property remains directly accessible,
+  and Format-List * still shows them all.
+-->
+<Configuration>
+  <ViewDefinitions>
+
+    <View>
+      <Name>SubtitleFile</Name>
+      <ViewSelectedBy>
+        <TypeName>SubtitleFile</TypeName>
+      </ViewSelectedBy>
+      <ListControl>
+        <ListEntries>
+          <ListEntry>
+            <ListItems>
+              <ListItem>
+                <Label>Path</Label>
+                <PropertyName>Path</PropertyName>
+              </ListItem>
+              <ListItem>
+                <Label>Format</Label>
+                <PropertyName>Format</PropertyName>
+              </ListItem>
+              <ListItem>
+                <Label>Encoding</Label>
+                <ScriptBlock>if ($_.HasBom) { "$($_.Encoding) (BOM)" } else { $_.Encoding }</ScriptBlock>
+              </ListItem>
+              <ListItem>
+                <Label>Entries</Label>
+                <ScriptBlock>$_.Entries.Count</ScriptBlock>
+              </ListItem>
+              <ListItem>
+                <Label>Duration</Label>
+                <ScriptBlock>$_.TotalDuration().ToString('hh\:mm\:ss')</ScriptBlock>
+              </ListItem>
+              <ListItem>
+                <Label>ParserWarnings</Label>
+                <ScriptBlock>$_.ParserWarnings.Count</ScriptBlock>
+              </ListItem>
+              <ListItem>
+                <!-- Only present on a file returned by Invoke-SubtitleTranslation. -->
+                <ItemSelectionCondition>
+                  <ScriptBlock>$null -ne $_.TranslationSummary</ScriptBlock>
+                </ItemSelectionCondition>
+                <Label>Translation</Label>
+                <ScriptBlock>
+                  if ($_.TranslationSummary) {
+                    $s = $_.TranslationSummary
+                    '{0} -> {1} via {2}/{3} ({4} entries, {5} tokens) - see .TranslationSummary' -f
+                      $s.SourceLanguage, $s.TargetLanguage, $s.Provider, $s.Model, $s.Entries, $s.TotalTokens
+                  }
+                </ScriptBlock>
+              </ListItem>
+            </ListItems>
+          </ListEntry>
+        </ListEntries>
+      </ListControl>
+    </View>
+
+    <View>
+      <Name>SubtitleTools.TranslationSummary</Name>
+      <ViewSelectedBy>
+        <TypeName>SubtitleTools.TranslationSummary</TypeName>
+      </ViewSelectedBy>
+      <ListControl>
+        <ListEntries>
+          <ListEntry>
+            <ListItems>
+              <ListItem><Label>Provider</Label><ScriptBlock>'{0} / {1}' -f $_.Provider, $_.Model</ScriptBlock></ListItem>
+              <ListItem><Label>Language</Label><ScriptBlock>'{0} -> {1}' -f $_.SourceLanguage, $_.TargetLanguage</ScriptBlock></ListItem>
+              <ListItem><Label>Source</Label><PropertyName>SourcePath</PropertyName></ListItem>
+              <ListItem>
+                <!-- Absent unless the caller asked for the file to be saved. -->
+                <ItemSelectionCondition><ScriptBlock>-not [string]::IsNullOrEmpty($_.OutputPath)</ScriptBlock></ItemSelectionCondition>
+                <Label>Output</Label>
+                <PropertyName>OutputPath</PropertyName>
+              </ListItem>
+              <ListItem><Label>Entries</Label><ScriptBlock>'{0} total: {1} translated, {2} cached, {3} unresolved' -f $_.Entries, $_.TranslatedEntries, $_.CachedEntries, $_.UnresolvedEntries</ScriptBlock></ListItem>
+              <ListItem><Label>Requests</Label><ScriptBlock>'{0} batches, {1} API calls, {2} retries, {3} truncated' -f $_.Batches, $_.ApiCalls, $_.Retries, $_.TruncatedBatches</ScriptBlock></ListItem>
+              <ListItem><Label>Tokens</Label><ScriptBlock>'{0:N0} in / {1:N0} out / {2:N0} total' -f $_.InputTokens, $_.OutputTokens, $_.TotalTokens</ScriptBlock></ListItem>
+              <ListItem><Label>Characters</Label><ScriptBlock>'{0:N0} -> {1:N0}' -f $_.SourceCharacters, $_.OutputCharacters</ScriptBlock></ListItem>
+              <ListItem><Label>Duration</Label><ScriptBlock>'{0} ({1} entries/min)' -f $_.Duration.ToString('hh\:mm\:ss'), $_.EntriesPerMinute</ScriptBlock></ListItem>
+              <ListItem><Label>Content</Label><ScriptBlock>if ($_.Primed) { '{0} / {1} / {2} tone (primed)' -f $_.ContentType, $_.ContentTitle, $_.Tone } else { 'no content context' }</ScriptBlock></ListItem>
+              <ListItem><Label>Glossary</Label><ScriptBlock>'{0} terms' -f $_.GlossaryTerms</ScriptBlock></ListItem>
+              <ListItem><Label>Streaming</Label><PropertyName>Streaming</PropertyName></ListItem>
+              <ListItem><Label>StartedAt</Label><PropertyName>StartedAt</PropertyName></ListItem>
+              <ListItem><Label>CompletedAt</Label><PropertyName>CompletedAt</PropertyName></ListItem>
+            </ListItems>
+          </ListEntry>
+        </ListEntries>
+      </ListControl>
+    </View>
+
+  </ViewDefinitions>
+</Configuration>

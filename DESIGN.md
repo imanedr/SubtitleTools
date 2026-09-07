@@ -1,7 +1,7 @@
 # SubtitleTools — Module Design & Architecture
 
 **Author:** Iman Edrisian  
-**Version:** 1.2.0  
+**Version:** 1.3.0  
 **Target:** PowerShell 5.1+ (Desktop & Core)
 
 ---
@@ -18,6 +18,7 @@ SubtitleTools is a PowerShell module for working with subtitle files in SRT and 
 SubtitleTools/
 ├── SubtitleTools.psd1          # Module manifest
 ├── SubtitleTools.psm1          # Root loader — classes defined here, functions dot-sourced
+├── SubtitleTools.format.ps1xml # Display views for SubtitleFile and TranslationSummary
 ├── DESIGN.md                   # This file
 ├── README.md                   # User-facing documentation
 ├── CHANGELOG.md                # Keep a Changelog-format release history
@@ -38,7 +39,8 @@ SubtitleTools/
 │   ├── Translation/            # Invoke-AnthropicTranslation, Invoke-OpenAITranslation, Invoke-GoogleTranslation,
 │   │                           # Invoke-OpenRouterTranslation, Invoke-TranslationApiRequest (shared HTTP helper),
 │   │                           # Invoke-TranslationProviderAdapter (dispatch), Invoke-TranslationPriming,
-│   │                           # Build-TranslationSystemPrompt, ProviderStore
+│   │                           # Invoke-TranslationApiStream (SSE), Invoke-TranslationBatchRequest (recovery),
+│   │                           # Build-TranslationSystemPrompt, Write-TranslationSummary, ProviderStore
 │   └── Utilities/              # Timestamp converters, Write-SubtitleLog, New-SubtitleEntryCopy
 │
 ├── Data/                       # Reference JSON data loaded at module import
@@ -108,6 +110,10 @@ Within each batch, entries are sent as numbered lines (`N|text`) and intra-entry
 Only after the retries are exhausted does an entry fall back to source text — and that is reported on the warning stream, because a partially translated subtitle file opens and plays normally and nothing else would reveal it. Fallback text is deliberately **not** cached: caching it would make it a permanent cache hit that no re-run or checkpoint resume could repair.
 
 **Streaming** (`Invoke-TranslationApiStream`): translation calls use server-sent events by default, so the caller can report progress while the model is still writing rather than only when the batch lands. Built on `System.Net.Http.HttpClient` with `ResponseHeadersRead` — the one HTTP client that can hand back a response stream before the body completes on *both* Windows PowerShell 5.1 Desktop and PowerShell 7 (`Invoke-RestMethod` buffers on both). Each provider's event schema is decoded by `-Shape` (`OpenAI` covers OpenRouter too). `Invoke-TranslationStreamAttempt` owns the degradation policy: a 4xx other than 429 is reported as an error, while 429/5xx and any transport failure return `$null` so the caller falls back to the buffered path. Streaming is a progress nicety and is never allowed to be the reason a translation fails; `-NoStream` disables it outright.
+
+**Run summary** (`Write-TranslationSummary`): the facts about a run — provider and model, batches, API calls, retries, truncated batches, tokens in/out, how many entries came from cache, how many never resolved, elapsed time — exist only in `Invoke-SubtitleTranslation`'s local variables and are unrecoverable from the translated file. They are therefore collected into a `SubtitleTools.TranslationSummary` object, attached to the returned `SubtitleFile` as `.TranslationSummary`, and rendered as a console block (suppressed by `-NoSummary`). The object is the source of truth; the block is one rendering of it. The renderer is the module's only sanctioned `Write-Host` — an end-of-run report for a human, where writing to the output stream would corrupt the `SubtitleFile` being returned — and it falls back to ASCII glyphs unless `[Console]::OutputEncoding` is UTF-8, since a legacy Windows console turns box-drawing characters into mojibake.
+
+**Display formatting** (`SubtitleTools.format.ps1xml`, loaded via the manifest's `FormatsToProcess`): without it a returned `SubtitleFile` renders by dumping every property including the entire `Entries` array, so translating a 300-line subtitle answered with a wall of truncated dialogue. The list views summarise `SubtitleFile` and `SubtitleTools.TranslationSummary` instead. Nothing is hidden — every property stays accessible, and `Format-List *` still shows them all.
 
 **Rate limiting:** a sliding window tracks requests per minute per session. When `RateLimitRpm` is approached, the function sleeps until the window resets.
 
@@ -211,7 +217,7 @@ TranslationProvider     Name, Model, ApiKeyEncrypted, BaseUrl, RateLimitRpm, Tem
 | `Get-TranslationProvider` | List configured providers and key status |
 | `Remove-TranslationProvider` | Remove a saved provider |
 | `New-TranslationSession` | Create a session with provider, glossary, and cache |
-| `Invoke-SubtitleTranslation` | Translate a file; batch, cache, rate-limit, resume, progress |
+| `Invoke-SubtitleTranslation` | Translate a file; batch, cache, rate-limit, resume, live progress, run summary |
 | `Invoke-BackTranslation` | Re-translate to source language; flag low-similarity entries |
 | `Get-OpenRouterModel` | List models available via the OpenRouter API (id, context length, pricing) |
 | `Get-TranslationGlossary` | Read a glossary JSON file |
