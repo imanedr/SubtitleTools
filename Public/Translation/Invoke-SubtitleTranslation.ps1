@@ -192,25 +192,30 @@
         if ($PrimeWithContext -and (-not $Session.ContentContext)) {
             Write-Verbose 'Starting translation priming (content analysis)...'
 
-            # Detect reasoning models: they spend a long time generating internal
-            # reasoning tokens before any visible content appears, so the priming
-            # phase can feel stuck. Warn upfront so the user knows what to expect.
-            $isReasoningModel = $provider.Model -match '(deepseek|o1-preview|o1-mini|o3-mini|reasoning|gemini-thinking|gemini-2\.5-pro|claude-opus-4|claude-sonnet-4)'
-            if ($isReasoningModel) {
-                Write-Warning "Reasoning model detected ('$($provider.Model)'). Priming analysis may take 1-5 minutes while the model thinks. Consider -PrimeWithContext:`$false or a non-reasoning model if this is too slow."
-            }
-
             $primingStart = [datetime]::UtcNow
 
-            # Live progress callback for the priming API call. Simplifies the streaming
-            # deltas into a human-readable status line: "Thinking...", "Writing: N chars",
-            # or "Found: FIELD, FIELD...".
+            # Repaints one status line in place. Padded out to the widest line written
+            # so far: without that, a shorter line ("Found: CONTENT_TYPE") leaves the
+            # tail of the longer one it overwrote ("... | 213s elapsed") on screen.
+            $inlineState = @{ Width = 0 }
+            $writeInline = {
+                param([string] $Text)
+                if ($Text.Length -gt $inlineState.Width) { $inlineState.Width = $Text.Length }
+                Write-Host ("`r{0}" -f $Text.PadRight($inlineState.Width)) -NoNewline
+            }.GetNewClosure()
+
+            # Live progress for the priming call, reducing the raw stream deltas to one
+            # human-readable line: "Thinking...", "Writing: N chars", or the analysis
+            # fields as the model names them. Which models reason and which do not is
+            # never inferred from the model name - a name-matching list is wrong the day
+            # a provider ships a model it has not heard of, and wrong today for models
+            # whose thinking this module never asks for. The stream says so directly.
             $primingCallback = $null
             if (-not $NoStream) {
                 $primingState = @{
-                    LastUpdate         = [datetime]::MinValue
-                    Fields             = [System.Collections.Generic.List[string]]::new()
-                    StreamingConfirmed = $false
+                    LastUpdate = [datetime]::MinValue
+                    Fields     = [System.Collections.Generic.List[string]]::new()
+                    Connected  = $false
                 }
                 $primingCallback = {
                     param($accumulated, $counters)
@@ -219,19 +224,26 @@
                     if (($now - $primingState.LastUpdate).TotalMilliseconds -lt 500) { return }
                     $primingState.LastUpdate = $now
 
-                    if (-not $primingState.StreamingConfirmed) {
-                        $primingState.StreamingConfirmed = $true
-                        Write-Host "`r  Priming: Streaming connected, waiting for response..." -NoNewline
+                    if (-not $primingState.Connected) {
+                        $primingState.Connected = $true
+                        # Worth having when diagnosing "it just sits there": the status
+                        # line below only ever moves if the SSE path is genuinely live,
+                        # so this is the marker that separates "streaming, and the model
+                        # is slow" from "fell back to a buffered request".
+                        Write-Verbose 'Priming stream connected.'
                     }
 
-                    $elapsed = [int]([datetime]::UtcNow - $primingStart).TotalSeconds
+                    $elapsed = [int]($now - $primingStart).TotalSeconds
 
                     if ($counters.Reasoning) {
-                        $reasonChars = $counters.ReasoningLength
-                        Write-Host "`r  Priming: Thinking... $($reasonChars) reasoning chars | $($elapsed)s elapsed" -NoNewline
-                        Write-Progress -Id 3 -ParentId 2 -Activity 'Priming translation context' `
-                            -Status "Thinking... $($reasonChars) reasoning chars | $($elapsed)s elapsed" `
-                            -PercentComplete 0
+                        # ReasoningLength is 0 when the provider returns its thinking as
+                        # an opaque blob - the phase is real, there is just nothing to
+                        # count - so the char figure is only shown when there is one.
+                        $status = if ($counters.ReasoningLength -gt 0) {
+                            "Thinking... $($counters.ReasoningLength) reasoning chars | ${elapsed}s elapsed"
+                        } else {
+                            "Thinking... | ${elapsed}s elapsed"
+                        }
                     } elseif ($accumulated) {
                         foreach ($line in ($accumulated -split "`n")) {
                             if ($line -match '^([A-Z_]+):\s*') {
@@ -241,24 +253,25 @@
                                 }
                             }
                         }
-                        $fieldList = if ($primingState.Fields.Count -gt 0) {
-                            "Found: $($primingState.Fields -join ', ')"
+                        $status = if ($primingState.Fields.Count -gt 0) {
+                            "Found: $($primingState.Fields -join ', ') | ${elapsed}s elapsed"
                         } else {
-                            "Writing: $($accumulated.Length) chars"
+                            "Writing: $($accumulated.Length) chars | ${elapsed}s elapsed"
                         }
-                        Write-Host "`r  Priming: $fieldList | $($elapsed)s elapsed" -NoNewline
-                        Write-Progress -Id 3 -ParentId 2 -Activity 'Priming translation context' `
-                            -Status $fieldList -PercentComplete 0
+                    } else {
+                        return
                     }
+
+                    & $writeInline "  Priming: $status"
+                    Write-Progress -Id 3 -ParentId 2 -Activity 'Priming translation context' `
+                        -Status $status -PercentComplete 0
                 }.GetNewClosure()
+
+                & $writeInline '  Priming: Sending samples for analysis...'
             }
 
-            Write-Progress -Id 3 -ParentId 2 -Activity 'Priming translation context' `
-                -Status "Sending $($PrimingSampleSize) sample entries for analysis..." `
-                -PercentComplete 0
-
-            Write-Host '  Priming: Sending samples for analysis...' -NoNewline
-
+            # Invoke-TranslationPriming raises and completes the -Id 3 bar itself; this
+            # function only supplies the callback that keeps it moving in between.
             $primedCtx = Invoke-TranslationPriming `
                 -InputObject    $InputObject `
                 -Session        $Session `
@@ -268,7 +281,8 @@
                 -SampleSize     $PrimingSampleSize `
                 -StreamCallback $primingCallback
 
-            Write-Host ''  # final newline after the \r-updated status line
+            # Close the in-place status line - only if one was ever opened.
+            if (-not $NoStream) { Write-Host '' }
 
             $primingElapsed = [int]([datetime]::UtcNow - $primingStart).TotalSeconds
             if ($primingElapsed -gt 90) {
@@ -522,10 +536,16 @@
                         $phase       = "Recovering $($live.LinesDone)/$($live.Expected)"
                         $entriesDone = $doneEntries
                     } elseif ($live.Reasoning) {
-                        # Reasoning models spend a long time generating internal
-                        # reasoning tokens before any visible content. Show this
-                        # phase explicitly so the user knows the batch is not stuck.
-                        $phase       = "Thinking ($($live.ReasoningLength) reasoning chars)"
+                        # A reasoning model emits nothing visible for a long time before
+                        # the first translated line. Name that phase, or the batch is
+                        # indistinguishable from a hung request. Reasoning only ever
+                        # reports true before the first visible character, so this
+                        # cannot pull $entriesDone backwards mid-batch.
+                        $phase = if ($live.ReasoningLength -gt 0) {
+                            "Thinking ($($live.ReasoningLength) reasoning chars)"
+                        } else {
+                            'Thinking'
+                        }
                         $entriesDone = $doneEntries
                     } else {
                         $phase       = "Translating $($live.LinesDone)/$($live.Expected)"

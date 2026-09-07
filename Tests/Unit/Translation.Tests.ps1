@@ -1125,4 +1125,217 @@ Describe 'Streaming path' {
             $reports[0].OutputEstimated | Should -BeTrue    # no usage reported yet
         }
     }
+
+    Context 'Reasoning field spellings' {
+        # No two providers spell this the same way, and reading only one of them is how
+        # the thinking phase silently never fired on OpenRouter.
+        It "Reads DeepSeek's flat reasoning_content" {
+            InModuleScope SubtitleTools {
+                Get-TranslationStreamReasoning -Delta ([PSCustomObject]@{ reasoning_content = 'weighing it up' })
+            } | Should -Be 'weighing it up'
+        }
+
+        It "Reads OpenRouter's flat reasoning" {
+            InModuleScope SubtitleTools {
+                Get-TranslationStreamReasoning -Delta ([PSCustomObject]@{ reasoning = 'weighing it up' })
+            } | Should -Be 'weighing it up'
+        }
+
+        It "Concatenates the text of OpenRouter's structured reasoning_details" {
+            InModuleScope SubtitleTools {
+                Get-TranslationStreamReasoning -Delta ([PSCustomObject]@{
+                    reasoning_details = @(
+                        [PSCustomObject]@{ type = 'reasoning.text'; text = 'first ' }
+                        [PSCustomObject]@{ type = 'reasoning.text'; text = 'second' }
+                    )
+                })
+            } | Should -Be 'first second'
+        }
+
+        It 'Falls back to a reasoning_details summary when there is no text' {
+            InModuleScope SubtitleTools {
+                Get-TranslationStreamReasoning -Delta ([PSCustomObject]@{
+                    reasoning_details = @([PSCustomObject]@{ type = 'reasoning.summary'; summary = 'considered the tone' })
+                })
+            } | Should -Be 'considered the tone'
+        }
+
+        It 'Returns empty, not null, for reasoning that is only an encrypted blob' {
+            # The model IS thinking; there is simply nothing readable to count. The
+            # caller still needs to hear about it, so this must not be null.
+            $reasoning = InModuleScope SubtitleTools {
+                Get-TranslationStreamReasoning -Delta ([PSCustomObject]@{
+                    reasoning_details = @([PSCustomObject]@{ type = 'reasoning.encrypted'; data = 'AQIDBA==' })
+                })
+            }
+
+            $reasoning | Should -Not -Be $null
+            $reasoning | Should -BeExactly ''
+        }
+
+        It 'Returns null for a delta that carries no reasoning at all' {
+            InModuleScope SubtitleTools {
+                Get-TranslationStreamReasoning -Delta ([PSCustomObject]@{ content = '1|alpha' })
+            } | Should -Be $null
+        }
+    }
+
+    Context 'Reasoning phase reporting' {
+        BeforeAll {
+            # Collects every OnDelta report a canned SSE body produces, plus the trace
+            # of which phase each one claimed: T = thinking, C = content.
+            $DecodeSse = {
+                param($body, $shape)
+
+                $seen = [System.Collections.Generic.List[hashtable]]::new()
+
+                $decoded = InModuleScope SubtitleTools -Parameters @{ body = $body; shape = $shape; seen = $seen } {
+                    param($body, $shape, $seen)
+
+                    $reader = [System.IO.StringReader]::new($body)
+                    try {
+                        Read-TranslationSseStream -Reader $reader -Shape $shape -OnDelta {
+                            param($accumulated, $counters)
+                            $seen.Add(@{
+                                Reasoning       = [bool]$counters.Reasoning
+                                ReasoningLength = [int]$counters.ReasoningLength
+                                Accumulated     = $accumulated
+                            })
+                        }
+                    } finally {
+                        $reader.Dispose()
+                    }
+                }
+
+                @{
+                    Decoded = $decoded
+                    Reports = $seen
+                    Trace   = -join ($seen | ForEach-Object { if ($_.Reasoning) { 'T' } else { 'C' } })
+                }
+            }.ToString()
+        }
+
+        It 'Reports the thinking phase, with a growing char count, before any content' {
+            $body = @'
+data: {"choices":[{"index":0,"delta":{"reasoning_content":"let me think"}}]}
+data: {"choices":[{"index":0,"delta":{"reasoning_content":" harder"}}]}
+data: {"choices":[{"index":0,"delta":{"content":"1|alpha\n"}}]}
+data: [DONE]
+'@
+
+            $run = & ([scriptblock]::Create($DecodeSse)) $body 'OpenAI'
+
+            $thinking = @($run.Reports | Where-Object { $_.Reasoning })
+            $thinking.Count             | Should -Be 2
+            $thinking[0].ReasoningLength | Should -Be 12   # "let me think"
+            $thinking[1].ReasoningLength | Should -Be 19   # + " harder"
+            # Nothing visible has been produced yet - that is the whole point.
+            $thinking[0].Accumulated    | Should -BeExactly ''
+            $thinking[1].Accumulated    | Should -BeExactly ''
+        }
+
+        It 'Never re-raises the thinking phase once content has started' {
+            # The trailing frames are the ones that caused this: an OpenAI-shape stream
+            # ends with a finish_reason chunk carrying an empty delta and then a
+            # usage-only chunk with no choices at all. Keying the thinking phase off
+            # "reasoning was seen at some point" reported both as thinking, which sent
+            # the caller's progress bar backwards at the end of every batch.
+            $body = @'
+data: {"choices":[{"index":0,"delta":{"reasoning_content":"thinking"}}]}
+data: {"choices":[{"index":0,"delta":{"content":"1|alpha\n"}}]}
+data: {"choices":[{"index":0,"delta":{"content":"2|beta\n"}}]}
+data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+data: {"choices":[],"usage":{"prompt_tokens":11,"completion_tokens":7}}
+data: [DONE]
+'@
+
+            $run = & ([scriptblock]::Create($DecodeSse)) $body 'OpenAI'
+
+            # Thinking first, then content, and never back again.
+            $run.Trace | Should -Match '^T+C+$'
+
+            $run.Decoded.Content      | Should -BeExactly "1|alpha`n2|beta`n"
+            $run.Decoded.FinishReason | Should -Be 'stop'
+            $run.Decoded.InputTokens  | Should -Be 11
+            $run.Decoded.OutputTokens | Should -Be 7
+        }
+
+        It 'Surfaces an Anthropic thinking_delta as reasoning without leaking it into the translation' {
+            $body = @'
+data: {"type":"message_start","message":{"usage":{"input_tokens":31}}}
+data: {"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"pondering"}}
+data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"1|salaam"}}
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}
+'@
+
+            $run = & ([scriptblock]::Create($DecodeSse)) $body 'Anthropic'
+
+            $run.Trace | Should -Match '^T+C+$'
+            # The scratchpad is progress information, never part of the answer.
+            $run.Decoded.Content      | Should -BeExactly '1|salaam'
+            $run.Decoded.FinishReason | Should -Be 'end_turn'
+            $run.Decoded.InputTokens  | Should -Be 31
+            $run.Decoded.OutputTokens | Should -Be 5
+        }
+
+        It 'Reports no thinking phase at all for a model that does not reason' {
+            $body = @'
+data: {"choices":[{"index":0,"delta":{"content":"1|alpha\n"}}]}
+data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+data: [DONE]
+'@
+
+            $run = & ([scriptblock]::Create($DecodeSse)) $body 'OpenAI'
+
+            $run.Trace | Should -BeExactly 'C'
+            @($run.Reports | Where-Object { $_.ReasoningLength -gt 0 }).Count | Should -Be 0
+        }
+    }
+
+    Context 'SSE framing' {
+        It 'Skips a half-flushed frame and stops at [DONE]' {
+            $decoded = InModuleScope SubtitleTools {
+                $body = @'
+data: {"choices":[{"index":0,"delta":{"content":"1|al"}}]}
+: this is an SSE comment, not data
+
+data: {"choices":[{"index":0,"delta":{"conte
+data: {"choices":[{"index":0,"delta":{"content":"pha"},"finish_reason":"length"}]}
+data: [DONE]
+data: {"choices":[{"index":0,"delta":{"content":" MUST NOT APPEAR"}}]}
+'@
+                $reader = [System.IO.StringReader]::new($body)
+                try {
+                    Read-TranslationSseStream -Reader $reader -Shape 'OpenAI'
+                } finally {
+                    $reader.Dispose()
+                }
+            }
+
+            # The truncated frame is dropped rather than throwing, and nothing after
+            # [DONE] is read.
+            $decoded.Content      | Should -BeExactly '1|alpha'
+            $decoded.FinishReason | Should -Be 'length'
+        }
+
+        It 'Decodes the Google shape, joining the parts of a candidate' {
+            $decoded = InModuleScope SubtitleTools {
+                $body = @'
+data: {"candidates":[{"content":{"parts":[{"text":"1|sa"},{"text":"laam"}]}}]}
+data: {"candidates":[{"content":{"parts":[{"text":"\n"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":13,"candidatesTokenCount":6}}
+'@
+                $reader = [System.IO.StringReader]::new($body)
+                try {
+                    Read-TranslationSseStream -Reader $reader -Shape 'Google'
+                } finally {
+                    $reader.Dispose()
+                }
+            }
+
+            $decoded.Content      | Should -BeExactly "1|salaam`n"
+            $decoded.FinishReason | Should -Be 'STOP'
+            $decoded.InputTokens  | Should -Be 13
+            $decoded.OutputTokens | Should -Be 6
+        }
+    }
 }

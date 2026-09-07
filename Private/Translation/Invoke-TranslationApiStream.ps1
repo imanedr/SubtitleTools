@@ -1,3 +1,204 @@
+function Get-TranslationStreamReasoning {
+    <#
+    .SYNOPSIS
+        Extracts the reasoning ("thinking") text carried by one OpenAI-shape streaming
+        delta, across the several different field names providers spell it with.
+    .DESCRIPTION
+        There is no standard for this field. DeepSeek's own API sends a flat
+        `reasoning_content` string. OpenRouter normalises to `reasoning` and also emits
+        a structured `reasoning_details` array whose entries carry `text`, `summary`,
+        or - for upstreams that only hand back an opaque blob - `data`. Reading just
+        one of these means the thinking phase goes undetected on the providers that use
+        the others, which is how this went unnoticed: OpenRouter is the usual route to
+        a reasoning model here, and it does not send `reasoning_content`.
+    .PARAMETER Delta
+        The `choices[0].delta` object from one SSE frame.
+    .OUTPUTS
+        [string] the reasoning text in this frame, or $null when the frame carried no
+        reasoning field at all. The difference matters: a frame whose only reasoning is
+        an encrypted blob yields '' rather than $null, which still tells the caller the
+        model is thinking even though there is no text to show for it.
+    #>
+    [OutputType([string])]
+    param($Delta)
+
+    if ($null -eq $Delta) { return $null }
+
+    if ($null -ne $Delta.reasoning_content) { return [string]$Delta.reasoning_content }
+    if ($null -ne $Delta.reasoning)         { return [string]$Delta.reasoning }
+
+    if ($null -ne $Delta.reasoning_details) {
+        $text = ''
+        foreach ($detail in @($Delta.reasoning_details)) {
+            if ($null -eq $detail) { continue }
+            if     ($null -ne $detail.text)    { $text += [string]$detail.text }
+            elseif ($null -ne $detail.summary) { $text += [string]$detail.summary }
+        }
+        return $text
+    }
+
+    return $null
+}
+
+function Read-TranslationSseStream {
+    <#
+    .SYNOPSIS
+        Decodes a server-sent-events response body into translated text, token counts,
+        and live progress callbacks.
+    .DESCRIPTION
+        Split out from Invoke-TranslationApiStream so the protocol half is separable
+        from the transport half. It takes any TextReader, so the entire decode - the
+        three provider event shapes, the reasoning phase, usage and finish reasons -
+        can be exercised against a canned response body with no HTTP involved. The
+        loop is the part with the interesting edge cases; leaving it welded to
+        HttpClient meant none of them could be tested.
+
+        SSE framing is deliberately minimal: only "data:" lines are read, "[DONE]" ends
+        the stream, and a payload that will not parse as JSON is skipped rather than
+        throwing - a partially flushed frame is normal mid-stream and must not kill an
+        otherwise good response.
+    .PARAMETER Reader
+        Reader positioned at the start of the response body.
+    .PARAMETER Shape
+        Which provider's event schema to decode: OpenAI (also OpenRouter), Anthropic,
+        or Google.
+    .PARAMETER OnDelta
+        See Invoke-TranslationApiStream -OnDelta.
+    .OUTPUTS
+        Hashtable: Content, InputTokens, OutputTokens, FinishReason, ErrorMessage
+    #>
+    [OutputType([hashtable])]
+    param(
+        [Parameter(Mandatory)]
+        [System.IO.TextReader] $Reader,
+
+        [Parameter(Mandatory)]
+        [ValidateSet('OpenAI', 'Anthropic', 'Google')]
+        [string] $Shape,
+
+        [scriptblock] $OnDelta
+    )
+
+    $result = @{
+        Content      = ''
+        InputTokens  = 0
+        OutputTokens = 0
+        FinishReason = $null
+        ErrorMessage = $null
+    }
+
+    $builder        = [System.Text.StringBuilder]::new()
+    $reasoningSoFar = [System.Text.StringBuilder]::new()
+
+    while ($null -ne ($line = $Reader.ReadLine())) {
+
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        if (-not $line.StartsWith('data:'))       { continue }
+
+        $payload = $line.Substring(5).Trim()
+        if ($payload -eq '[DONE]') { break }
+
+        try {
+            $sse = $payload | ConvertFrom-Json
+        } catch {
+            # A partially flushed frame is normal mid-stream - skip it.
+            continue
+        }
+
+        $delta = $null
+        # $null means "this frame carried no reasoning field"; '' means it carried one
+        # with no readable text, which still says the model is thinking.
+        $reasonText = $null
+
+        switch ($Shape) {
+            'OpenAI' {
+                $choice = $sse.choices | Select-Object -First 1
+                if ($choice) {
+                    $delta = $choice.delta.content
+                    if ($choice.finish_reason) { $result.FinishReason = $choice.finish_reason }
+
+                    # Reasoning models spend minutes emitting thinking tokens before a
+                    # single visible character appears. Accumulate them so the caller
+                    # can show that phase instead of a frozen bar.
+                    $reasonText = Get-TranslationStreamReasoning -Delta $choice.delta
+                    if ($reasonText) { $null = $reasoningSoFar.Append($reasonText) }
+                }
+                # Present only on the final chunk, and only when the request asked
+                # for stream_options.include_usage.
+                if ($sse.usage) {
+                    if ($null -ne $sse.usage.prompt_tokens)     { $result.InputTokens  = [int]$sse.usage.prompt_tokens }
+                    if ($null -ne $sse.usage.completion_tokens) { $result.OutputTokens = [int]$sse.usage.completion_tokens }
+                }
+            }
+            'Anthropic' {
+                switch ($sse.type) {
+                    'message_start' {
+                        if ($sse.message.usage.input_tokens) { $result.InputTokens = [int]$sse.message.usage.input_tokens }
+                    }
+                    'content_block_delta' {
+                        # Only text_delta carries the answer. thinking_delta is the
+                        # model's scratchpad: it is surfaced as the reasoning phase
+                        # below, never appended to the translation itself.
+                        if ($sse.delta.type -eq 'text_delta') {
+                            $delta = $sse.delta.text
+                        } elseif ($sse.delta.type -eq 'thinking_delta') {
+                            $reasonText = [string]$sse.delta.thinking
+                            if ($reasonText) { $null = $reasoningSoFar.Append($reasonText) }
+                        }
+                    }
+                    'message_delta' {
+                        if ($sse.delta.stop_reason)    { $result.FinishReason = $sse.delta.stop_reason }
+                        if ($sse.usage.output_tokens)  { $result.OutputTokens = [int]$sse.usage.output_tokens }
+                    }
+                    'error' {
+                        $result.ErrorMessage = "$($sse.error.type): $($sse.error.message)"
+                    }
+                }
+            }
+            'Google' {
+                $candidate = $sse.candidates | Select-Object -First 1
+                if ($candidate) {
+                    $delta = ($candidate.content.parts | ForEach-Object { $_.text }) -join ''
+                    if ($candidate.finishReason) { $result.FinishReason = $candidate.finishReason }
+                }
+                if ($sse.usageMetadata) {
+                    if ($null -ne $sse.usageMetadata.promptTokenCount)     { $result.InputTokens  = [int]$sse.usageMetadata.promptTokenCount }
+                    if ($null -ne $sse.usageMetadata.candidatesTokenCount) { $result.OutputTokens = [int]$sse.usageMetadata.candidatesTokenCount }
+                }
+            }
+        }
+
+        if ($delta) {
+            $null = $builder.Append($delta)
+
+            if ($OnDelta) {
+                & $OnDelta $builder.ToString() @{
+                    InputTokens     = $result.InputTokens
+                    OutputTokens    = $result.OutputTokens
+                    ReasoningLength = $reasoningSoFar.Length
+                    Reasoning       = $false
+                }
+            }
+        } elseif ($OnDelta -and $null -ne $reasonText -and $builder.Length -eq 0) {
+            # Still thinking: this frame carried reasoning AND not one visible
+            # character has arrived yet. Both halves matter. Firing on "reasoning was
+            # seen at some point" instead would re-raise the thinking phase on every
+            # later contentless frame - the finish_reason chunk, the usage-only chunk,
+            # a keepalive - which sends the caller's progress bar backwards partway
+            # through a response that is in fact still advancing.
+            & $OnDelta $builder.ToString() @{
+                InputTokens     = $result.InputTokens
+                OutputTokens    = $result.OutputTokens
+                ReasoningLength = $reasoningSoFar.Length
+                Reasoning       = $true
+            }
+        }
+    }
+
+    $result.Content = $builder.ToString()
+    return $result
+}
+
 function Invoke-TranslationApiStream {
     <#
     .SYNOPSIS
@@ -15,10 +216,8 @@ function Invoke-TranslationApiStream {
         hand back the response stream before the body is complete. Invoke-RestMethod
         cannot do this on Desktop edition at all.
 
-        SSE framing is deliberately minimal: only "data:" lines are read, "[DONE]" ends
-        the stream, and a payload that will not parse as JSON is skipped rather than
-        throwing - a partially flushed frame is normal mid-stream and must not kill an
-        otherwise good response.
+        This function owns the transport only; Read-TranslationSseStream decodes the
+        body it opens.
 
         Callers are expected to treat a failure here as recoverable and fall back to
         the buffered path (see Invoke-TranslationApiRequest); nothing in the module
@@ -34,9 +233,17 @@ function Invoke-TranslationApiStream {
         Which provider's event schema to decode: OpenAI (also OpenRouter), Anthropic,
         or Google.
     .PARAMETER OnDelta
-        Optional scriptblock invoked as text arrives, with two arguments: the full text
-        accumulated so far, and a hashtable of counters so far
-        (@{ InputTokens; OutputTokens }). Throttling is the caller's responsibility.
+        Optional scriptblock invoked as the response arrives, with two arguments: the
+        full text accumulated so far, and a hashtable of counters so far
+        (@{ InputTokens; OutputTokens; ReasoningLength; Reasoning }). Throttling is the
+        caller's responsibility.
+
+        A reasoning model produces nothing visible for minutes while it thinks, so the
+        callback also fires during that phase, with Reasoning = $true and an empty
+        accumulated string - otherwise a long think is indistinguishable from a hang.
+        Reasoning is $true only BEFORE the first visible character arrives; from then
+        on it stays $false for the rest of the response, so a caller driving a progress
+        bar off it never sees the phase flip backwards.
     .PARAMETER JsonDepth
         -Depth for ConvertTo-Json on the request body.
     .PARAMETER TimeoutSec
@@ -85,21 +292,18 @@ function Invoke-TranslationApiStream {
     }
 
     $result = @{
-        Success         = $false
-        Content         = ''
-        InputTokens     = 0
-        OutputTokens    = 0
-        ReasoningLength = 0
-        FinishReason    = $null
-        StatusCode      = $null
-        ErrorMessage    = $null
+        Success      = $false
+        Content      = ''
+        InputTokens  = 0
+        OutputTokens = 0
+        FinishReason = $null
+        StatusCode   = $null
+        ErrorMessage = $null
     }
 
-    $json             = $Body | ConvertTo-Json -Depth $JsonDepth
-    $client           = $null
-    $reader           = $null
-    $builder          = [System.Text.StringBuilder]::new()
-    $resultReasoning  = [System.Text.StringBuilder]::new()
+    $json   = $Body | ConvertTo-Json -Depth $JsonDepth
+    $client = $null
+    $reader = $null
 
     try {
         $client         = [System.Net.Http.HttpClient]::new()
@@ -122,105 +326,17 @@ function Invoke-TranslationApiStream {
         $stream = $response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
         $reader = [System.IO.StreamReader]::new($stream, [System.Text.Encoding]::UTF8)
 
-        while (-not $reader.EndOfStream) {
-            $line = $reader.ReadLine()
+        $decoded = Read-TranslationSseStream -Reader $reader -Shape $Shape -OnDelta $OnDelta
 
-            if ([string]::IsNullOrWhiteSpace($line)) { continue }
-            if (-not $line.StartsWith('data:'))       { continue }
-
-            $payload = $line.Substring(5).Trim()
-            if ($payload -eq '[DONE]') { break }
-
-            try {
-                $sse = $payload | ConvertFrom-Json
-            } catch {
-                # A partially flushed frame is normal mid-stream - skip it.
-                continue
-            }
-
-            $delta = $null
-
-            switch ($Shape) {
-                'OpenAI' {
-                    $choice = $sse.choices | Select-Object -First 1
-                    if ($choice) {
-                        $delta = $choice.delta.content
-                        if ($choice.finish_reason) { $result.FinishReason = $choice.finish_reason }
-                    }
-                    # Present only on the final chunk, and only when the request asked
-                    # for stream_options.include_usage.
-                    if ($sse.usage) {
-                        if ($null -ne $sse.usage.prompt_tokens)     { $result.InputTokens  = [int]$sse.usage.prompt_tokens }
-                        if ($null -ne $sse.usage.completion_tokens) { $result.OutputTokens = [int]$sse.usage.completion_tokens }
-                    }
-                    # Reasoning models (DeepSeek, o1, o3, etc.) spend minutes generating
-                    # reasoning tokens before any content appears. Track those separately,
-                    # and also accumulate them in a reasoning buffer so the only-OnDelta
-                    # codepath in the priming phase can detect when thinking is happening.
-                    if ($choice -and $null -ne $choice.delta.reasoning_content) {
-                        $null = $resultReasoning.Append($choice.delta.reasoning_content)
-                    }
-                }
-                'Anthropic' {
-                    switch ($sse.type) {
-                        'message_start' {
-                            if ($sse.message.usage.input_tokens) { $result.InputTokens = [int]$sse.message.usage.input_tokens }
-                        }
-                        'content_block_delta' {
-                            # Ignore thinking_delta and every other block type - only
-                            # text_delta carries the answer.
-                            if ($sse.delta.type -eq 'text_delta') { $delta = $sse.delta.text }
-                        }
-                        'message_delta' {
-                            if ($sse.delta.stop_reason)    { $result.FinishReason = $sse.delta.stop_reason }
-                            if ($sse.usage.output_tokens)  { $result.OutputTokens = [int]$sse.usage.output_tokens }
-                        }
-                        'error' {
-                            $result.ErrorMessage = "$($sse.error.type): $($sse.error.message)"
-                        }
-                    }
-                }
-                'Google' {
-                    $candidate = $sse.candidates | Select-Object -First 1
-                    if ($candidate) {
-                        $delta = ($candidate.content.parts | ForEach-Object { $_.text }) -join ''
-                        if ($candidate.finishReason) { $result.FinishReason = $candidate.finishReason }
-                    }
-                    if ($sse.usageMetadata) {
-                        if ($null -ne $sse.usageMetadata.promptTokenCount)     { $result.InputTokens  = [int]$sse.usageMetadata.promptTokenCount }
-                        if ($null -ne $sse.usageMetadata.candidatesTokenCount) { $result.OutputTokens = [int]$sse.usageMetadata.candidatesTokenCount }
-                    }
-                }
-            }
-
-            if ($delta) {
-                $null = $builder.Append($delta)
-
-                if ($OnDelta) {
-                    & $OnDelta $builder.ToString() @{
-                        InputTokens     = $result.InputTokens
-                        OutputTokens    = $result.OutputTokens
-                        ReasoningLength = $resultReasoning.Length
-                        Reasoning       = $false
-                    }
-                }
-            } elseif ($resultReasoning.Length -gt 0 -and $OnDelta) {
-                # Reasoning models send reasoning_content chunks before any visible
-                # content. Fire OnDelta so callers can reflect the thinking phase.
-                & $OnDelta $builder.ToString() @{
-                    InputTokens     = $result.InputTokens
-                    OutputTokens    = $result.OutputTokens
-                    ReasoningLength = $resultReasoning.Length
-                    Reasoning       = $true
-                }
-            }
-        }
+        $result.InputTokens  = $decoded.InputTokens
+        $result.OutputTokens = $decoded.OutputTokens
+        $result.FinishReason = $decoded.FinishReason
+        $result.ErrorMessage = $decoded.ErrorMessage
 
         if ($result.ErrorMessage) { return $result }
 
-        $result.Content         = $builder.ToString()
-        $result.ReasoningLength = $resultReasoning.Length
-        $result.Success         = $true
+        $result.Content = $decoded.Content
+        $result.Success = $true
         return $result
 
     } catch {
