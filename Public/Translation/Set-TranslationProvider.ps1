@@ -24,10 +24,19 @@ function Set-TranslationProvider {
         Client-side input batching budget: how many subtitle entries get packed into one
         outbound API call, estimated as tokens x ~4 chars/token. This does NOT limit the
         API's output/response size - see -MaxOutputTokens for that.
+    .PARAMETER MaxEntriesPerBatch
+        Hard ceiling on how many subtitle entries go into a single API call, applied on top
+        of -MaxTokensPerBatch. This is the setting that bounds how much the model has to
+        WRITE per call: a short file can easily fit under the character budget in one batch,
+        and asking a model for hundreds of translated lines in one response invites both
+        truncation and line-numbering drift. Lower it for verbose target languages or
+        reasoning models; raise it for fewer, larger calls. Default: 40.
     .PARAMETER MaxOutputTokens
         Maximum tokens the provider is allowed to generate in its response (sent to the API
         as e.g. Anthropic's max_tokens). This is the output cap, separate from
-        -MaxTokensPerBatch (which only controls input batching). Default: 8192.
+        -MaxTokensPerBatch (which only controls input batching). Default: 16384. Note that
+        on reasoning models the thinking tokens are billed against this same budget, so a
+        value sized only for the visible answer will truncate the response.
     .PARAMETER Temperature
         Sampling temperature (0.0-1.0).
     .EXAMPLE
@@ -52,11 +61,13 @@ function Set-TranslationProvider {
         [string]      $BaseUrl,
         [int]         $RateLimitRpm,
         [int]         $MaxTokensPerBatch,
+        [ValidateRange(1, 500)]
+        [int]         $MaxEntriesPerBatch,
         [int]         $MaxOutputTokens,
         [decimal]     $Temperature
     )
 
-    $configParams = 'Model','ApiKeyPlainText','ApiKey','BaseUrl','RateLimitRpm','MaxTokensPerBatch','Temperature','MaxOutputTokens'
+    $configParams = 'Model','ApiKeyPlainText','ApiKey','BaseUrl','RateLimitRpm','MaxTokensPerBatch','MaxEntriesPerBatch','Temperature','MaxOutputTokens'
     $isUpdate = @($configParams | Where-Object { $PSBoundParameters.ContainsKey($_) }).Count -gt 0
 
     if ($isUpdate) {
@@ -72,7 +83,8 @@ function Set-TranslationProvider {
             $provider.BaseUrl            = $d.BaseUrl
             $provider.RateLimitRpm       = $d.RateLimitRpm
             $provider.MaxTokensPerBatch  = $d.MaxTokensPerBatch
-            $provider.MaxOutputTokens    = if ($d.MaxOutputTokens) { $d.MaxOutputTokens } else { 8192 }
+            $provider.MaxEntriesPerBatch = if ($d.MaxEntriesPerBatch) { $d.MaxEntriesPerBatch } else { 40 }
+            $provider.MaxOutputTokens    = if ($d.MaxOutputTokens) { $d.MaxOutputTokens } else { 16384 }
             $provider.Temperature        = $d.Temperature
         }
 
@@ -80,8 +92,9 @@ function Set-TranslationProvider {
         if ($PSBoundParameters.ContainsKey('Model'))             { $provider.Model             = $Model }
         if ($PSBoundParameters.ContainsKey('BaseUrl'))           { $provider.BaseUrl           = $BaseUrl }
         if ($PSBoundParameters.ContainsKey('RateLimitRpm'))      { $provider.RateLimitRpm      = $RateLimitRpm }
-        if ($PSBoundParameters.ContainsKey('MaxTokensPerBatch')) { $provider.MaxTokensPerBatch = $MaxTokensPerBatch }
-        if ($PSBoundParameters.ContainsKey('MaxOutputTokens'))   { $provider.MaxOutputTokens   = $MaxOutputTokens }
+        if ($PSBoundParameters.ContainsKey('MaxTokensPerBatch'))  { $provider.MaxTokensPerBatch  = $MaxTokensPerBatch }
+        if ($PSBoundParameters.ContainsKey('MaxEntriesPerBatch')) { $provider.MaxEntriesPerBatch = $MaxEntriesPerBatch }
+        if ($PSBoundParameters.ContainsKey('MaxOutputTokens'))    { $provider.MaxOutputTokens    = $MaxOutputTokens }
         if ($PSBoundParameters.ContainsKey('Temperature'))       { $provider.Temperature       = $Temperature }
 
         # Encrypt and store API key if supplied

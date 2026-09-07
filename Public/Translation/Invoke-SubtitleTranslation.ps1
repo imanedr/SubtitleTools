@@ -225,6 +225,11 @@
 
         $charsPerToken = 4
         $maxChars      = $provider.MaxTokensPerBatch * $charsPerToken
+        # MaxEntriesPerBatch bounds how much the model has to WRITE per call. Without
+        # it a short file slips under the character budget as a single batch, and
+        # asking for hundreds of translated lines in one response invites truncation
+        # and line-numbering drift. 0/unset means the property predates this version.
+        $maxEntries    = if ($provider.MaxEntriesPerBatch -gt 0) { $provider.MaxEntriesPerBatch } else { 40 }
         $allEntries    = $InputObject.Entries
         $totalEntries  = $allEntries.Count
         $doneEntries   = 0
@@ -234,17 +239,21 @@
         $totalInputTokens  = 0
         $totalOutputTokens = 0
         $totalRetries      = 0
+        $totalApiCalls     = 0
+        $totalUnresolved   = 0
 
         $translateBatch = {
-            param($batchEntries, $prov, $key, $src, $tgt, $glossary, $cache, $contentCtx, $promptPath, $logPath)
+            param($batchEntries, $prov, $key, $src, $tgt, $glossary, $cache, $contentCtx, $promptPath, $logPath, $onProgress)
 
-            $texts = $batchEntries | ForEach-Object { $_.Lines -join '<NL>' }
+            $texts = @($batchEntries | ForEach-Object { $_.Lines -join '<NL>' })
 
             $toTranslate  = [System.Collections.Generic.List[int]]::new()
             $batchResult  = @{}
             $inputTokens  = 0
             $outputTokens = 0
             $retryCount   = 0
+            $apiCalls     = 0
+            $unresolved   = 0
 
             for ($idx = 0; $idx -lt $texts.Count; $idx++) {
                 $hash = ([System.Security.Cryptography.MD5]::Create().ComputeHash(
@@ -259,59 +268,51 @@
             }
 
             if ($toTranslate.Count -gt 0) {
-                $n        = $toTranslate.Count
-                $srcTexts = $toTranslate | ForEach-Object { $texts[$_] }
+                $srcTexts = @($toTranslate | ForEach-Object { $texts[$_] })
 
-                $systemPrompt = Build-TranslationSystemPrompt `
-                    -BatchSize      $n `
-                    -SourceLanguage $src `
-                    -TargetLanguage $tgt `
-                    -ContentContext $contentCtx `
-                    -Glossary       $glossary `
-                    -SystemPromptPath $(if ($promptPath) { $promptPath } else { '' })
+                # Handles truncated responses and numbering drift by re-asking for the
+                # missing entries in progressively smaller batches - see
+                # Invoke-TranslationBatchRequest.
+                $req = Invoke-TranslationBatchRequest `
+                    -Texts            $srcTexts `
+                    -Provider         $prov `
+                    -ApiKey           $key `
+                    -SourceLanguage   $src `
+                    -TargetLanguage   $tgt `
+                    -Glossary         $glossary `
+                    -ContentContext   $contentCtx `
+                    -SystemPromptPath $(if ($promptPath) { $promptPath } else { '' }) `
+                    -OnProgress       $onProgress
 
-                # Numbered format: "1|text\n2|text\n..." — immune to pipe chars in translated text
-                $userContent = (0..($srcTexts.Count - 1) | ForEach-Object { "$($_ + 1)|$($srcTexts[$_])" }) -join "`n"
+                $inputTokens  = $req.InputTokens
+                $outputTokens = $req.OutputTokens
+                $retryCount   = $req.RetryCount
+                $apiCalls     = $req.ApiCalls
 
-                $adapterResult = Invoke-TranslationProviderAdapter -SystemPrompt $systemPrompt -UserContent $userContent -Provider $prov -ApiKey $key
-
-                $inputTokens  = $adapterResult.InputTokens
-                $outputTokens = $adapterResult.OutputTokens
-                $retryCount   = $adapterResult.RetryCount
-
-                if ($adapterResult.FinishReason -eq 'error') {
-                    throw "API call failed: $($adapterResult.Content)"
-                }
-
-                # Parse "N|translation" lines — split on first pipe only so translated text can contain pipes
-                $responseMap = @{}
-                foreach ($line in ($adapterResult.Content -split '\r?\n')) {
-                    if ($line -match '^(\d+)\|(.*)$') {
-                        $responseMap[[int]$Matches[1]] = $Matches[2].Trim()
-                    }
-                }
-
-                $missing = 0
                 for ($r = 0; $r -lt $toTranslate.Count; $r++) {
-                    $origIdx     = $toTranslate[$r]
-                    $oneBasedIdx = $r + 1
-                    $hash        = ([System.Security.Cryptography.MD5]::Create().ComputeHash(
+                    $origIdx = $toTranslate[$r]
+                    $hash    = ([System.Security.Cryptography.MD5]::Create().ComputeHash(
                         [System.Text.Encoding]::UTF8.GetBytes($texts[$origIdx])
                     ) | ForEach-Object { $_.ToString('x2') }) -join ''
 
-                    $xlat = if ($responseMap.ContainsKey($oneBasedIdx)) {
-                        $responseMap[$oneBasedIdx]
-                    } else {
-                        $missing++
-                        $texts[$origIdx]    # fall back to source text
-                    }
+                    $xlat = $req.Translations[$r]
 
-                    $batchResult[$origIdx] = $xlat
-                    $cache[$hash]          = $xlat
+                    if ([string]::IsNullOrEmpty($xlat)) {
+                        # Last resort after every retry level failed: keep the source
+                        # text so timings and entry count stay intact. Deliberately NOT
+                        # written to the cache - caching an untranslated fallback would
+                        # make it a permanent cache hit, so a resume or a re-run could
+                        # never fix it.
+                        $unresolved++
+                        $batchResult[$origIdx] = $texts[$origIdx]
+                    } else {
+                        $batchResult[$origIdx] = $xlat
+                        $cache[$hash]          = $xlat
+                    }
                 }
 
-                if ($missing -gt 0) {
-                    Write-SubtitleLog -Message "$missing entr$(if ($missing -eq 1) {'y'} else {'ies'}) missing from translation response. Source text used as fallback." `
+                if ($unresolved -gt 0) {
+                    Write-SubtitleLog -Message "$unresolved entr$(if ($unresolved -eq 1) {'y'} else {'ies'}) could not be translated after retrying in smaller batches. Source text used as fallback." `
                         -Level Warning -LogPath $logPath
                 }
             }
@@ -321,6 +322,8 @@
                 InputTokens  = $inputTokens
                 OutputTokens = $outputTokens
                 RetryCount   = $retryCount
+                ApiCalls     = $apiCalls
+                Unresolved   = $unresolved
             }
         }
 
@@ -338,97 +341,75 @@
         $rpmWindowStart = [datetime]::UtcNow
         $rpmCount       = 0
 
+        # --- Batch plan ---
+        # Batches are planned up front rather than accumulated while iterating, so the
+        # progress bar can report a real "Batch 3/8" denominator, and so there is one
+        # translate code path instead of a main loop plus a duplicated final-batch block.
+        $batches      = [System.Collections.Generic.List[object]]::new()
         $pendingBatch = [System.Collections.Generic.List[SubtitleEntry]]::new()
         $batchChars   = 0
-        $batchNum     = 0
 
         foreach ($entry in $allEntries) {
-            $entryText  = $entry.Lines -join '<NL>'
-            $entryChars = $entryText.Length
+            $entryChars = ($entry.Lines -join '<NL>').Length
 
-            if ($batchChars + $entryChars -gt $maxChars -and $pendingBatch.Count -gt 0) {
-                if ($PSCmdlet.ShouldProcess("$($pendingBatch.Count) entries", 'Translate')) {
-                    $batchNum++
+            $overflowsChars   = ($batchChars + $entryChars) -gt $maxChars
+            $overflowsEntries = $pendingBatch.Count -ge $maxEntries
 
-                    # Rate limiting
-                    $rpmCount++
-                    if ($provider.RateLimitRpm -gt 0 -and $rpmCount -ge $provider.RateLimitRpm) {
-                        $rpmElapsed = ([datetime]::UtcNow - $rpmWindowStart).TotalSeconds
-                        if ($rpmElapsed -lt 60) {
-                            $wait = [int](60 - $rpmElapsed) + 1
-                            Write-Verbose "Rate limit reached. Waiting ${wait}s..."
-                            Write-Progress @progressParams -Activity $activity `
-                                -Status "Batch $batchNum | Rate limit — waiting ${wait}s..." `
-                                -PercentComplete ([int](($doneEntries / $totalEntries) * 100))
-                            Start-Sleep -Seconds $wait
-                        }
-                        $rpmWindowStart = [datetime]::UtcNow
-                        $rpmCount       = 0
-                    }
-
-                    Write-Progress @progressParams -Activity $activity `
-                        -Status "Batch $batchNum | Calling API ($($pendingBatch.Count) entries) | Done: $doneEntries/$totalEntries..." `
-                        -PercentComplete ([int](($doneEntries / $totalEntries) * 100))
-
-                    $batchStart = [datetime]::UtcNow
-                    try {
-                        $batchOutcome = & $translateBatch $pendingBatch $provider $apiKeySecure `
-                            $SourceLanguage $TargetLanguage $Session.Glossary $Session.Cache `
-                            $Session.ContentContext $SystemPromptPath $LogPath
-                    } catch {
-                        & $saveCheckpoint $Session
-                        throw
-                    }
-                    $batchElapsed = [int]([datetime]::UtcNow - $batchStart).TotalSeconds
-
-                    $totalInputTokens  += $batchOutcome.InputTokens
-                    $totalOutputTokens += $batchOutcome.OutputTokens
-                    $totalRetries      += $batchOutcome.RetryCount
-
-                    for ($r = 0; $r -lt $pendingBatch.Count; $r++) {
-                        $srcEntry = $pendingBatch[$r]
-                        $newLines = ($batchOutcome.Results[$r] -replace '<NL>', "`n") -split "`n"
-                        $newEntry = New-SubtitleEntryCopy -Source $srcEntry -Lines $newLines
-                        $translatedEntries.Add($newEntry)
-                    }
-
-                    $doneEntries += $pendingBatch.Count
-
-                    $totalElapsed = ([datetime]::UtcNow - $overallStart).TotalSeconds
-                    $rate         = if ($totalElapsed -gt 0) { [int]($doneEntries / $totalElapsed * 60) } else { 0 }
-                    $remaining    = $totalEntries - $doneEntries
-                    $etaSec       = if ($rate -gt 0) { [int]($remaining / ($rate / 60)) } else { 0 }
-                    $etaStr       = if ($etaSec -gt 60) { '{0}m {1}s' -f [int]($etaSec / 60), ($etaSec % 60) } else { "${etaSec}s" }
-                    $tokStr       = "$(& $formatCount $totalInputTokens)/$(& $formatCount $totalOutputTokens) tok"
-
-                    Write-Progress @progressParams -Activity $activity `
-                        -Status "Batch $batchNum done in ${batchElapsed}s | $doneEntries/$totalEntries entries | ~$rate/min | ETA $etaStr | $tokStr" `
-                        -PercentComplete ([int](($doneEntries / $totalEntries) * 100))
-
-                    Write-SubtitleLog -Message "Batch $batchNum`: $($pendingBatch.Count) entries in ${batchElapsed}s." -LogPath $LogPath
-                }
-
-                $pendingBatch.Clear()
-                $batchChars = 0
+            if ($pendingBatch.Count -gt 0 -and ($overflowsChars -or $overflowsEntries)) {
+                $batches.Add($pendingBatch)
+                $pendingBatch = [System.Collections.Generic.List[SubtitleEntry]]::new()
+                $batchChars   = 0
             }
 
             $pendingBatch.Add($entry)
             $batchChars += $entryChars
         }
+        if ($pendingBatch.Count -gt 0) { $batches.Add($pendingBatch) }
 
-        # Final batch
-        if ($pendingBatch.Count -gt 0 -and $PSCmdlet.ShouldProcess("$($pendingBatch.Count) entries", 'Translate')) {
-            $batchNum++
+        $totalBatches = $batches.Count
+        Write-Verbose "Translation plan: $totalEntries entries across $totalBatches batch(es) (cap: $maxEntries entries / $maxChars chars per call)."
+
+        for ($b = 0; $b -lt $totalBatches; $b++) {
+            $currentBatch = $batches[$b]
+            $batchNum     = $b + 1
+
+            if (-not $PSCmdlet.ShouldProcess("$($currentBatch.Count) entries", 'Translate')) { continue }
+
+            $percent = [int](($doneEntries / $totalEntries) * 100)
+
+            # Rate limiting. $rpmCount counts API calls actually made, not batches -
+            # a batch that had to split and retry costs several requests.
+            if ($provider.RateLimitRpm -gt 0 -and $rpmCount -ge $provider.RateLimitRpm) {
+                $rpmElapsed = ([datetime]::UtcNow - $rpmWindowStart).TotalSeconds
+                if ($rpmElapsed -lt 60) {
+                    $wait = [int](60 - $rpmElapsed) + 1
+                    Write-Verbose "Rate limit reached. Waiting ${wait}s..."
+                    Write-Progress @progressParams -Activity $activity `
+                        -Status "Batch $batchNum/$totalBatches | Rate limit — waiting ${wait}s..." `
+                        -PercentComplete $percent
+                    Start-Sleep -Seconds $wait
+                }
+                $rpmWindowStart = [datetime]::UtcNow
+                $rpmCount       = 0
+            }
+
+            # Keeps the bar moving while a self-healing retry round runs inside the
+            # batch, which would otherwise look identical to a hung API call.
+            $onProgress = {
+                param($statusText)
+                Write-Progress @progressParams -Activity $activity `
+                    -Status "Batch $batchNum/$totalBatches | $statusText" -PercentComplete $percent
+            }.GetNewClosure()
 
             Write-Progress @progressParams -Activity $activity `
-                -Status "Batch $batchNum (final) | Calling API ($($pendingBatch.Count) entries) | Done: $doneEntries/$totalEntries..." `
-                -PercentComplete 99
+                -Status "Batch $batchNum/$totalBatches | Calling API ($($currentBatch.Count) entries) | $doneEntries/$totalEntries done..." `
+                -PercentComplete $percent
 
             $batchStart = [datetime]::UtcNow
             try {
-                $batchOutcome = & $translateBatch $pendingBatch $provider $apiKeySecure `
+                $batchOutcome = & $translateBatch $currentBatch $provider $apiKeySecure `
                     $SourceLanguage $TargetLanguage $Session.Glossary $Session.Cache `
-                    $Session.ContentContext $SystemPromptPath $LogPath
+                    $Session.ContentContext $SystemPromptPath $LogPath $onProgress
             } catch {
                 & $saveCheckpoint $Session
                 throw
@@ -438,17 +419,31 @@
             $totalInputTokens  += $batchOutcome.InputTokens
             $totalOutputTokens += $batchOutcome.OutputTokens
             $totalRetries      += $batchOutcome.RetryCount
+            $totalApiCalls     += $batchOutcome.ApiCalls
+            $totalUnresolved   += $batchOutcome.Unresolved
+            $rpmCount          += $batchOutcome.ApiCalls
 
-            for ($r = 0; $r -lt $pendingBatch.Count; $r++) {
-                $srcEntry = $pendingBatch[$r]
+            for ($r = 0; $r -lt $currentBatch.Count; $r++) {
+                $srcEntry = $currentBatch[$r]
                 $newLines = ($batchOutcome.Results[$r] -replace '<NL>', "`n") -split "`n"
                 $newEntry = New-SubtitleEntryCopy -Source $srcEntry -Lines $newLines
                 $translatedEntries.Add($newEntry)
             }
 
-            $doneEntries += $pendingBatch.Count
+            $doneEntries += $currentBatch.Count
 
-            Write-SubtitleLog -Message "Batch $batchNum (final): $($pendingBatch.Count) entries in ${batchElapsed}s." -LogPath $LogPath
+            $totalElapsed = ([datetime]::UtcNow - $overallStart).TotalSeconds
+            $rate         = if ($totalElapsed -gt 0) { [int]($doneEntries / $totalElapsed * 60) } else { 0 }
+            $remaining    = $totalEntries - $doneEntries
+            $etaSec       = if ($rate -gt 0) { [int]($remaining / ($rate / 60)) } else { 0 }
+            $etaStr       = if ($etaSec -gt 60) { '{0}m {1}s' -f [int]($etaSec / 60), ($etaSec % 60) } else { "${etaSec}s" }
+            $tokStr       = "$(& $formatCount $totalInputTokens)/$(& $formatCount $totalOutputTokens) tok"
+
+            Write-Progress @progressParams -Activity $activity `
+                -Status "Batch $batchNum/$totalBatches done in ${batchElapsed}s | $doneEntries/$totalEntries entries | ~$rate/min | ETA $etaStr | $tokStr" `
+                -PercentComplete ([int](($doneEntries / $totalEntries) * 100))
+
+            Write-SubtitleLog -Message "Batch $batchNum/$totalBatches`: $($currentBatch.Count) entries in ${batchElapsed}s." -LogPath $LogPath
         }
 
         Write-Progress @progressParams -Activity $activity -Completed
@@ -460,8 +455,17 @@
 
         $tokenSummary = "$(& $formatCount $totalInputTokens)/$(& $formatCount $totalOutputTokens) tok"
         $retrySuffix  = if ($totalRetries -gt 0) { " Retries: $totalRetries." } else { '' }
-        Write-SubtitleLog -Message "Translation complete. $($translated.Entries.Count) entries. Provider: $($provider.Name) / $($provider.Model). Tokens: $tokenSummary.$retrySuffix" `
+        Write-SubtitleLog -Message "Translation complete. $($translated.Entries.Count) entries in $totalBatches batch(es), $totalApiCalls API call(s). Provider: $($provider.Name) / $($provider.Model). Tokens: $tokenSummary.$retrySuffix" `
             -LogPath $LogPath
+
+        # A partially-translated file is the failure mode most likely to go unnoticed:
+        # it opens fine, plays fine, and only the untranslated tail gives it away. Say
+        # so loudly on the warning stream, not just in the log file.
+        if ($totalUnresolved -gt 0) {
+            Write-Warning ("{0} of {1} entries could not be translated and kept their source text. " -f $totalUnresolved, $totalEntries +
+                "This usually means the model's output was cut short. Try a lower -MaxEntriesPerBatch or a higher -MaxOutputTokens: " +
+                "Set-TranslationProvider -Name $($provider.Name) -MaxEntriesPerBatch 20")
+        }
 
         if ($OutputPath -and $PSCmdlet.ShouldProcess($OutputPath, 'Save translated subtitle')) {
             Export-SubtitleFile -InputObject $translated -Path $OutputPath

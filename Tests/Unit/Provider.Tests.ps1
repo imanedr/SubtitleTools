@@ -20,8 +20,8 @@ AfterAll {
     Import-Module $ModulePath -Force
 }
 
-Describe 'TranslationProvider MaxOutputTokens migration' {
-    Context 'Loading a v1.0.0-era providers.json with no MaxOutputTokens key' {
+Describe 'TranslationProvider settings migration' {
+    Context 'Loading a v1.0.0-era providers.json with no MaxOutputTokens/MaxEntriesPerBatch keys' {
         BeforeAll {
             # Point the module's non-Windows config root (XDG_CONFIG_HOME) at a
             # fresh temp directory, and seed a providers.json that predates the
@@ -41,8 +41,10 @@ Describe 'TranslationProvider MaxOutputTokens migration' {
                         MaxTokensPerBatch = 4000
                         Temperature       = 0.3
                         ApiKeyEncrypted   = 'not-a-real-key'
-                        # Intentionally NO MaxOutputTokens key - simulates a
-                        # providers.json written before this property existed.
+                        # Intentionally NO MaxOutputTokens / MaxEntriesPerBatch keys -
+                        # simulates a providers.json written before those properties
+                        # existed. [int]$null is 0, and 0 would mean "no output tokens"
+                        # / "no entries per batch", so both need an explicit guard.
                     }
                 }
             }
@@ -61,6 +63,14 @@ Describe 'TranslationProvider MaxOutputTokens migration' {
             $provider | Should -Not -BeNullOrEmpty
             $provider.MaxOutputTokens | Should -Be 8192
             $provider.MaxOutputTokens | Should -Not -Be 0
+        }
+
+        It 'Defaults the rehydrated provider MaxEntriesPerBatch to 40, not 0' {
+            # A 0 here would make the batch planner flush after every single entry,
+            # i.e. one API call per subtitle line.
+            $provider = Get-TranslationProvider -Name OpenAI
+            $provider.MaxEntriesPerBatch | Should -Be 40
+            $provider.MaxEntriesPerBatch | Should -Not -Be 0
         }
     }
 }

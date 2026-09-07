@@ -396,6 +396,219 @@ Describe 'Invoke-SubtitleTranslation checkpoint-on-failure and token aggregation
     }
 }
 
+Describe 'Test-TranslationTruncated' {
+    It 'Recognises <reason> as an output-cap truncation' -ForEach @(
+        @{ reason = 'length' }        # OpenAI / OpenRouter
+        @{ reason = 'max_tokens' }    # Anthropic
+        @{ reason = 'MAX_TOKENS' }    # Google Gemini (upper-case on the wire)
+    ) {
+        InModuleScope SubtitleTools -Parameters @{ reason = $reason } {
+            param($reason)
+            Test-TranslationTruncated -FinishReason $reason | Should -BeTrue
+        }
+    }
+
+    It 'Does not mistake <reason> for a truncation' -ForEach @(
+        @{ reason = 'stop' }
+        @{ reason = 'end_turn' }
+        @{ reason = 'STOP' }
+        @{ reason = '' }
+        @{ reason = $null }
+    ) {
+        InModuleScope SubtitleTools -Parameters @{ reason = $reason } {
+            param($reason)
+            Test-TranslationTruncated -FinishReason $reason | Should -BeFalse
+        }
+    }
+}
+
+Describe 'Truncated-response recovery' {
+    # Regression cover for the real-world failure this was written from: a 294-entry
+    # file went to google/gemini-3.8-flash via OpenRouter as a single batch, the
+    # response stopped after entry 76 because the reasoning tokens exhausted
+    # max_tokens, and entries 77-294 were silently written out as untranslated
+    # English. finish_reason was 'length' on a 200 OK, so nothing threw.
+
+    BeforeAll {
+        # Held as source text, not a live scriptblock: it is rebuilt with
+        # [scriptblock]::Create inside InModuleScope so that [TranslationProvider]
+        # and [SubtitleFile] resolve in the module's own session state - see the
+        # NOTE at the top of this file.
+        $TranslateHelper = {
+            param($entryCount, $maxEntriesPerBatch)
+
+            $provider                    = [TranslationProvider]::new()
+            $provider.Name               = 'OpenRouter'
+            $provider.Model              = 'google/gemini-3.8-flash'
+            $provider.BaseUrl            = 'https://openrouter.test/api/v1'
+            $provider.MaxTokensPerBatch  = 10000
+            $provider.MaxEntriesPerBatch = $maxEntriesPerBatch
+            $provider.RateLimitRpm       = 0
+            $provider.ApiKeyEncrypted    = 'placeholder-since-Unprotect-ApiKey-is-mocked'
+
+            $session = @{
+                Provider       = $provider
+                Glossary       = @{}
+                Cache          = @{}
+                CheckpointPath = $null
+                ContentContext = $null
+            }
+
+            $file        = [SubtitleFile]::new()
+            $file.Format = 'SRT'
+            $entries     = foreach ($i in 1..$entryCount) {
+                $e = [SubtitleEntry]::new()
+                $e.Index = $i
+                $e.Start = [TimeSpan]::FromSeconds($i)
+                $e.End   = [TimeSpan]::FromSeconds($i + 1)
+                $e.Lines = @("Source line $i")
+                $e
+            }
+            $file.Entries = @($entries)
+
+            $result = Invoke-SubtitleTranslation -InputObject $file -TargetLanguage 'fa' -Session $session
+            return @{ Result = $result; Session = $session }
+        }.ToString()
+    }
+
+    BeforeEach {
+        Mock -ModuleName SubtitleTools -CommandName Start-Sleep -MockWith { }
+        Mock -ModuleName SubtitleTools -CommandName Unprotect-ApiKey -MockWith { 'fake-plain-key' }
+        $global:TruncCallCount = 0
+    }
+
+    AfterEach {
+        Remove-Variable -Name TruncCallCount -Scope Global -ErrorAction SilentlyContinue
+    }
+
+    It 'Re-asks for the cut-off entries instead of writing out untranslated source text' {
+        # Emits only the first 2 numbered lines with finish_reason = length on the
+        # first call, then answers every follow-up call in full.
+        Mock -ModuleName SubtitleTools -CommandName Invoke-RestMethod -MockWith {
+            $global:TruncCallCount++
+            $request   = [System.Text.Encoding]::UTF8.GetString($Body) | ConvertFrom-Json
+            $requested = @($request.messages[1].content -split "`n").Count
+
+            if ($global:TruncCallCount -eq 1) {
+                # Entry 1 completed; entry 2 was still being written when the budget
+                # ran out, so it lands as a half-word. Entries 3-5 never appear.
+                $content = "1|XLAT-1`n2|XLAT-HALFWRIT"
+                $finish  = 'length'
+            } else {
+                $content = (1..$requested | ForEach-Object { "$_|XLAT-$_" }) -join "`n"
+                $finish  = 'stop'
+            }
+
+            [PSCustomObject]@{
+                choices = @([PSCustomObject]@{
+                    message       = [PSCustomObject]@{ content = $content }
+                    finish_reason = $finish
+                })
+                usage = [PSCustomObject]@{ prompt_tokens = 10; completion_tokens = 5 }
+                model = 'google/gemini-3.8-flash'
+            }
+        }
+
+        InModuleScope SubtitleTools -Parameters @{ helper = $TranslateHelper } {
+            param($helper)
+            $outcome = & ([scriptblock]::Create($helper)) 5 5 -WarningAction SilentlyContinue
+
+            $outcome.Result.Entries.Count | Should -Be 5
+            foreach ($entry in $outcome.Result.Entries) {
+                # '^XLAT-\d+$' rather than '^XLAT-': it must reject BOTH the original
+                # bug's leftover "Source line N" AND the half-written "XLAT-HALFWRIT"
+                # that a truncated response's final line carries.
+                $entry.Lines[0] | Should -Match '^XLAT-\d+$'
+            }
+        }
+
+        # 1 truncated call + 2 half-size retries covering the 4 unresolved entries
+        # (entry 2 is discarded too: a truncated response's last line is a partial).
+        Should -Invoke -ModuleName SubtitleTools -CommandName Invoke-RestMethod -Times 3 -Exactly
+    }
+
+    It 'Caps a batch at MaxEntriesPerBatch even when the whole file fits the character budget' {
+        # The original bug needed no truncation to occur at all: 294 short entries
+        # fit under MaxTokensPerBatch*4 chars, so the planner made ONE call asking
+        # for 294 translated lines. MaxEntriesPerBatch is what bounds that.
+        Mock -ModuleName SubtitleTools -CommandName Invoke-RestMethod -MockWith {
+            $request   = [System.Text.Encoding]::UTF8.GetString($Body) | ConvertFrom-Json
+            $requested = @($request.messages[1].content -split "`n").Count
+            $requested | Should -BeLessOrEqual 3
+
+            [PSCustomObject]@{
+                choices = @([PSCustomObject]@{
+                    message       = [PSCustomObject]@{ content = ((1..$requested | ForEach-Object { "$_|XLAT-$_" }) -join "`n") }
+                    finish_reason = 'stop'
+                })
+                usage = [PSCustomObject]@{ prompt_tokens = 10; completion_tokens = 5 }
+                model = 'google/gemini-3.8-flash'
+            }
+        }
+
+        InModuleScope SubtitleTools -Parameters @{ helper = $TranslateHelper } {
+            param($helper)
+            $outcome = & ([scriptblock]::Create($helper)) 10 3
+            $outcome.Result.Entries.Count | Should -Be 10
+        }
+
+        # 10 entries at 3 per batch = 4 calls (3/3/3/1), not 1 call for all 10.
+        Should -Invoke -ModuleName SubtitleTools -CommandName Invoke-RestMethod -Times 4 -Exactly
+    }
+
+    It 'Falls back to source text without caching it, so a resume can still fix the entry' {
+        # Model never returns a parseable numbered line. A single entry cannot be
+        # split further, so it exhausts immediately and falls back.
+        Mock -ModuleName SubtitleTools -CommandName Invoke-RestMethod -MockWith {
+            [PSCustomObject]@{
+                choices = @([PSCustomObject]@{
+                    message       = [PSCustomObject]@{ content = 'I am sorry, I cannot help with that.' }
+                    finish_reason = 'stop'
+                })
+                usage = [PSCustomObject]@{ prompt_tokens = 10; completion_tokens = 5 }
+                model = 'google/gemini-3.8-flash'
+            }
+        }
+
+        InModuleScope SubtitleTools -Parameters @{ helper = $TranslateHelper } {
+            param($helper)
+            $outcome = & ([scriptblock]::Create($helper)) 1 5 -WarningAction SilentlyContinue
+
+            $outcome.Result.Entries[0].Lines[0] | Should -Be 'Source line 1'
+
+            # The cache must stay empty. Caching an untranslated fallback would make
+            # it a permanent cache hit, so re-running or resuming from a checkpoint
+            # could never repair the entry.
+            $outcome.Session.Cache.Count | Should -Be 0
+        }
+    }
+
+    It 'Warns on the warning stream when entries end up untranslated' {
+        Mock -ModuleName SubtitleTools -CommandName Invoke-RestMethod -MockWith {
+            [PSCustomObject]@{
+                choices = @([PSCustomObject]@{
+                    message       = [PSCustomObject]@{ content = 'no numbered lines here' }
+                    finish_reason = 'stop'
+                })
+                usage = [PSCustomObject]@{ prompt_tokens = 1; completion_tokens = 1 }
+                model = 'google/gemini-3.8-flash'
+            }
+        }
+
+        $warnings = InModuleScope SubtitleTools -Parameters @{ helper = $TranslateHelper } {
+            param($helper)
+            & ([scriptblock]::Create($helper)) 1 5 | Out-Null
+        } 3>&1 | Where-Object { $_ -is [System.Management.Automation.WarningRecord] }
+
+        # A partially-translated file plays fine and reads fine - the only signal the
+        # user gets is this warning, so it must reach the warning stream. Matched on
+        # the end-of-run summary's own wording, not the generic "could not be
+        # translated" phrase that the per-batch log line also emits.
+        ($warnings -join ' ') | Should -Match 'kept their source text'
+        ($warnings -join ' ') | Should -Match 'MaxEntriesPerBatch'
+    }
+}
+
 Describe 'Get-OpenRouterModel' {
     It 'Parses a mocked /models payload into the right shape, converting per-token prices to per-million' {
         Mock -ModuleName SubtitleTools -CommandName Invoke-RestMethod -MockWith {

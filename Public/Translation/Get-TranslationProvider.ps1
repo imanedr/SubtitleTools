@@ -29,8 +29,9 @@ function Get-TranslationProvider {
             HasApiKey         = -not [string]::IsNullOrEmpty($provider.ApiKeyEncrypted)
             BaseUrl           = $provider.BaseUrl
             RateLimitRpm      = $provider.RateLimitRpm
-            MaxTokensPerBatch = $provider.MaxTokensPerBatch
-            MaxOutputTokens   = $provider.MaxOutputTokens
+            MaxTokensPerBatch  = $provider.MaxTokensPerBatch
+            MaxEntriesPerBatch = $provider.MaxEntriesPerBatch
+            MaxOutputTokens    = $provider.MaxOutputTokens
             Temperature       = $provider.Temperature
             IsDefault         = ($provider.Name -eq $script:DefaultProvider)
         }

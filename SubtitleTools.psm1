@@ -234,6 +234,7 @@ class TranslationProvider {
     [string]   $ApiKeyEncrypted    # DPAPI-encrypted base64 API key (CurrentUser scope)
     [string]   $BaseUrl
     [int]      $MaxTokensPerBatch  # Client-side input batching heuristic (chars-per-token budget for packing entries into one call)
+    [int]      $MaxEntriesPerBatch # Hard cap on subtitle entries per API call - bounds the OUTPUT the model must produce
     [int]      $MaxOutputTokens    # API output-token cap sent to the provider (e.g. Anthropic max_tokens) - distinct from MaxTokensPerBatch
     [int]      $RateLimitRpm       # Requests per minute (0 = unlimited)
     [decimal]  $Temperature
@@ -242,6 +243,7 @@ class TranslationProvider {
     TranslationProvider() {
         $this.Temperature        = 0.3
         $this.MaxTokensPerBatch  = 4000
+        $this.MaxEntriesPerBatch = 40
         $this.MaxOutputTokens    = 8192
         $this.RateLimitRpm       = 60
         $this.SupportedLanguages = @()
@@ -336,7 +338,11 @@ if (Test-Path $script:ProvidersFilePath) {
             $provider.BaseUrl           = $p.BaseUrl
             $provider.RateLimitRpm      = $p.RateLimitRpm
             $provider.MaxTokensPerBatch = $p.MaxTokensPerBatch
-            if ($null -ne $p.MaxOutputTokens) { $provider.MaxOutputTokens = [int]$p.MaxOutputTokens }
+            # Guard every field added after 1.0.0: a providers.json written by an
+            # older version has no such property, and [int]$null coerces to 0 -
+            # which would mean "no output tokens" / "no entries per batch".
+            if ($null -ne $p.MaxOutputTokens)    { $provider.MaxOutputTokens    = [int]$p.MaxOutputTokens }
+            if ($null -ne $p.MaxEntriesPerBatch) { $provider.MaxEntriesPerBatch = [int]$p.MaxEntriesPerBatch }
             $provider.Temperature       = [decimal]$p.Temperature
             $provider.ApiKeyEncrypted   = $p.ApiKeyEncrypted
             $script:ConfiguredProviders[$provName] = $provider
