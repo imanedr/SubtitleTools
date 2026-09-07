@@ -1,7 +1,7 @@
 # SubtitleTools — Module Design & Architecture
 
 **Author:** Iman Edrisian  
-**Version:** 1.3.1  
+**Version:** 1.3.2 \
 **Target:** PowerShell 5.1+ (Desktop & Core)
 
 ---

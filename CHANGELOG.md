@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.3.2] - 2026-09-07
 
 ### Added
 
@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   persists the selection with the provider. `None` disables reasoning for
   models where OpenRouter reports reasoning as optional, avoiding long thinking
   phases and their output-token cost; `Auto` preserves the model's default.
+- **Live priming and reasoning progress.** Translation now reports the priming
+  analysis as it runs and identifies a model's reasoning phase directly from
+  streamed reasoning fields rather than maintaining a fragile list of model
+  names. Reasoning progress includes a growing character count and switches to
+  translation progress as soon as visible content starts.
 
 ## [1.3.1] - 2026-09-06
 

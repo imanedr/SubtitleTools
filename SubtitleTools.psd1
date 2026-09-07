@@ -1,5 +1,5 @@
 @{
-    ModuleVersion        = '1.3.1'
+    ModuleVersion        = '1.3.2'
     GUID                 = 'a3f2e1d0-4b5c-6d7e-8f9a-0b1c2d3e4f50'
     Author               = 'Iman Edrisian'
     Copyright            = '(c) 2025 Iman Edrisian. All rights reserved.'
@@ -91,6 +91,14 @@
             # Kept in sync with CHANGELOG.md by hand: PSGallery reads ReleaseNotes,
             # GitHub readers read CHANGELOG.md. Update both together.
             ReleaseNotes = @'
+Version 1.3.2
+
+- Added configurable OpenRouter reasoning effort. Set-TranslationProvider now
+  accepts -ReasoningEffort Auto|None|Minimal|Low|Medium|High|XHigh|Max; None
+  disables reasoning for models where OpenRouter makes it optional
+- Added live visibility into translation priming and model reasoning phases,
+  including streamed reasoning token growth before translated content starts
+
 Version 1.3.1
 
 - Fixed Publish-SubtitleFile being unusable on Windows PowerShell 5.1. Both
