@@ -72,5 +72,10 @@ Describe 'TranslationProvider settings migration' {
             $provider.MaxEntriesPerBatch | Should -Be 40
             $provider.MaxEntriesPerBatch | Should -Not -Be 0
         }
+
+        It 'Defaults the rehydrated provider ReasoningEffort to auto' {
+            $provider = Get-TranslationProvider -Name OpenAI
+            $provider.ReasoningEffort | Should -Be 'auto'
+        }
     }
 }

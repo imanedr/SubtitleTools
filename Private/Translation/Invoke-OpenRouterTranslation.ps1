@@ -44,6 +44,10 @@ function Invoke-OpenRouterTranslation {
         )
     }
 
+    if ($Provider.ReasoningEffort -and $Provider.ReasoningEffort -ne 'auto') {
+        $body.reasoning = @{ effort = $Provider.ReasoningEffort }
+    }
+
     $headers = @{
         'Authorization' = "Bearer $plainKey"
         'HTTP-Referer'  = 'https://github.com/imanedr/SubtitleTools'

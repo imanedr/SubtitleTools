@@ -6,7 +6,8 @@
     "MaxTokensPerBatch": 4000,
     "MaxEntriesPerBatch": 40,
     "MaxOutputTokens": 16384,
-    "Temperature": 0.3
+    "Temperature": 0.3,
+    "ReasoningEffort": "auto"
   },
   "Anthropic": {
     "Model": "claude-sonnet-5",
@@ -15,7 +16,8 @@
     "MaxTokensPerBatch": 4000,
     "MaxEntriesPerBatch": 40,
     "MaxOutputTokens": 16384,
-    "Temperature": 0.3
+    "Temperature": 0.3,
+    "ReasoningEffort": "auto"
   },
   "Google": {
     "Model": "gemini-flash-latest",
@@ -24,7 +26,8 @@
     "MaxTokensPerBatch": 8000,
     "MaxEntriesPerBatch": 40,
     "MaxOutputTokens": 16384,
-    "Temperature": 0.3
+    "Temperature": 0.3,
+    "ReasoningEffort": "auto"
   },
   "OpenRouter": {
     "Model": "anthropic/claude-sonnet-5",
@@ -33,6 +36,7 @@
     "MaxTokensPerBatch": 4000,
     "MaxEntriesPerBatch": 40,
     "MaxOutputTokens": 16384,
-    "Temperature": 0.3
+    "Temperature": 0.3,
+    "ReasoningEffort": "auto"
   }
 }

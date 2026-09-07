@@ -502,6 +502,14 @@ Set-TranslationProvider -Name OpenRouter -MaxOutputTokens 32768
 Set-TranslationProvider -Name OpenRouter -MaxEntriesPerBatch 20
 ```
 
+OpenRouter reasoning can also be disabled for models that make reasoning optional:
+
+```powershell
+Set-TranslationProvider -Name OpenRouter -ReasoningEffort None
+```
+
+`ReasoningEffort` accepts `Auto` (the default), `None`, `Minimal`, `Low`, `Medium`, `High`, `XHigh`, or `Max`. OpenRouter models marked as having mandatory reasoning reject `None`; use `Minimal` for those, or select a non-reasoning model. `Get-TranslationProvider` shows the saved value.
+
 ### Back-Translation Verification
 
 Re-translate back to the source language and flag entries where meaning may have been lost.

@@ -39,6 +39,10 @@ function Set-TranslationProvider {
         value sized only for the visible answer will truncate the response.
     .PARAMETER Temperature
         Sampling temperature (0.0-1.0).
+    .PARAMETER ReasoningEffort
+        OpenRouter reasoning effort. Auto leaves the model default unchanged; None requests
+        reasoning to be disabled. Models with mandatory reasoning reject None, so use Minimal
+        or choose a non-reasoning model for those models.
     .EXAMPLE
         # First-time setup
         Set-TranslationProvider -Name Google -ApiKeyPlainText 'AIza...'
@@ -64,10 +68,12 @@ function Set-TranslationProvider {
         [ValidateRange(1, 500)]
         [int]         $MaxEntriesPerBatch,
         [int]         $MaxOutputTokens,
-        [decimal]     $Temperature
+        [decimal]     $Temperature,
+        [ValidateSet('Auto', 'None', 'Minimal', 'Low', 'Medium', 'High', 'XHigh', 'Max')]
+        [string]      $ReasoningEffort
     )
 
-    $configParams = 'Model','ApiKeyPlainText','ApiKey','BaseUrl','RateLimitRpm','MaxTokensPerBatch','MaxEntriesPerBatch','Temperature','MaxOutputTokens'
+    $configParams = 'Model','ApiKeyPlainText','ApiKey','BaseUrl','RateLimitRpm','MaxTokensPerBatch','MaxEntriesPerBatch','Temperature','MaxOutputTokens','ReasoningEffort'
     $isUpdate = @($configParams | Where-Object { $PSBoundParameters.ContainsKey($_) }).Count -gt 0
 
     if ($isUpdate) {
@@ -86,6 +92,7 @@ function Set-TranslationProvider {
             $provider.MaxEntriesPerBatch = if ($d.MaxEntriesPerBatch) { $d.MaxEntriesPerBatch } else { 40 }
             $provider.MaxOutputTokens    = if ($d.MaxOutputTokens) { $d.MaxOutputTokens } else { 16384 }
             $provider.Temperature        = $d.Temperature
+            $provider.ReasoningEffort    = if ($d.ReasoningEffort) { $d.ReasoningEffort } else { 'auto' }
         }
 
         # Apply only the params that were explicitly supplied
@@ -96,6 +103,7 @@ function Set-TranslationProvider {
         if ($PSBoundParameters.ContainsKey('MaxEntriesPerBatch')) { $provider.MaxEntriesPerBatch = $MaxEntriesPerBatch }
         if ($PSBoundParameters.ContainsKey('MaxOutputTokens'))    { $provider.MaxOutputTokens    = $MaxOutputTokens }
         if ($PSBoundParameters.ContainsKey('Temperature'))       { $provider.Temperature       = $Temperature }
+        if ($PSBoundParameters.ContainsKey('ReasoningEffort'))   { $provider.ReasoningEffort   = $ReasoningEffort.ToLowerInvariant() }
 
         # Encrypt and store API key if supplied
         $plainKey = $null

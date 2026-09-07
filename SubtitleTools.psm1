@@ -238,6 +238,7 @@ class TranslationProvider {
     [int]      $MaxOutputTokens    # API output-token cap sent to the provider (e.g. Anthropic max_tokens) - distinct from MaxTokensPerBatch
     [int]      $RateLimitRpm       # Requests per minute (0 = unlimited)
     [decimal]  $Temperature
+    [string]   $ReasoningEffort    # OpenRouter reasoning effort; 'auto' leaves the model default unchanged
     [string[]] $SupportedLanguages # Empty means all languages supported; reserved, not currently enforced
 
     TranslationProvider() {
@@ -246,6 +247,7 @@ class TranslationProvider {
         $this.MaxEntriesPerBatch = 40
         $this.MaxOutputTokens    = 8192
         $this.RateLimitRpm       = 60
+        $this.ReasoningEffort    = 'auto'
         $this.SupportedLanguages = @()
     }
 
@@ -343,6 +345,7 @@ if (Test-Path $script:ProvidersFilePath) {
             # which would mean "no output tokens" / "no entries per batch".
             if ($null -ne $p.MaxOutputTokens)    { $provider.MaxOutputTokens    = [int]$p.MaxOutputTokens }
             if ($null -ne $p.MaxEntriesPerBatch) { $provider.MaxEntriesPerBatch = [int]$p.MaxEntriesPerBatch }
+            if ($null -ne $p.ReasoningEffort)    { $provider.ReasoningEffort    = [string]$p.ReasoningEffort }
             $provider.Temperature       = [decimal]$p.Temperature
             $provider.ApiKeyEncrypted   = $p.ApiKeyEncrypted
             $script:ConfiguredProviders[$provName] = $provider
@@ -363,4 +366,3 @@ if (Test-Path $script:SubDLTokenStorePath) {
         Write-Warning "SubtitleTools: Could not load SubDL token: $_"
     }
 }
-

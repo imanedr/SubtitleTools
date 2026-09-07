@@ -90,6 +90,7 @@ TRANSLATION_WARNINGS: <any structural challenges (e.g., wordplay, acrostics, num
     $analysisProv.MaxOutputTokens    = $provider.MaxOutputTokens
     $analysisProv.RateLimitRpm      = $provider.RateLimitRpm
     $analysisProv.Temperature       = 0.7
+    $analysisProv.ReasoningEffort   = $provider.ReasoningEffort
 
     $adapterResult = Invoke-TranslationProviderAdapter -SystemPrompt $systemPrompt -UserContent $userContent -Provider $analysisProv -ApiKey $ApiKey -StreamCallback $StreamCallback
 

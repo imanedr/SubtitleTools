@@ -258,6 +258,34 @@ Describe 'Invoke-OpenRouterTranslation' {
             $Headers.ContainsKey('Authorization') -and $Headers['Authorization'] -eq 'Bearer test-key'
         }
     }
+
+    It 'Sends reasoning effort none when configured' {
+        $global:OpenRouterRequestBody = $null
+        Mock -ModuleName SubtitleTools -CommandName Invoke-RestMethod -MockWith {
+            $global:OpenRouterRequestBody = [System.Text.Encoding]::UTF8.GetString($Body) | ConvertFrom-Json
+            [PSCustomObject]@{
+                choices = @([PSCustomObject]@{
+                    message = [PSCustomObject]@{ content = '1|Hello' }
+                    finish_reason = 'stop'
+                })
+                usage = [PSCustomObject]@{ prompt_tokens = 1; completion_tokens = 1 }
+                model = 'minimax/minimax-m3'
+            }
+        }
+
+        InModuleScope SubtitleTools {
+            $provider = [TranslationProvider]::new()
+            $provider.Name = 'OpenRouter'
+            $provider.Model = 'minimax/minimax-m3'
+            $provider.BaseUrl = 'https://openrouter.test/api/v1'
+            $provider.ReasoningEffort = 'none'
+            $key = ConvertTo-SecureString 'test-key' -AsPlainText -Force
+            Invoke-OpenRouterTranslation -SystemPrompt 'sys' -UserContent 'user' -Provider $provider -ApiKey $key
+        } | Out-Null
+
+        $global:OpenRouterRequestBody.reasoning.effort | Should -Be 'none'
+        Remove-Variable -Name OpenRouterRequestBody -Scope Global -ErrorAction SilentlyContinue
+    }
 }
 
 Describe 'Invoke-SubtitleTranslation checkpoint-on-failure and token aggregation (Stage 6)' {

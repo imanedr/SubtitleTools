@@ -33,6 +33,7 @@ function Get-TranslationProvider {
             MaxEntriesPerBatch = $provider.MaxEntriesPerBatch
             MaxOutputTokens    = $provider.MaxOutputTokens
             Temperature       = $provider.Temperature
+            ReasoningEffort   = $provider.ReasoningEffort
             IsDefault         = ($provider.Name -eq $script:DefaultProvider)
         }
     }

@@ -56,6 +56,7 @@ function Save-ProviderStore {
             MaxEntriesPerBatch = $p.MaxEntriesPerBatch
             MaxOutputTokens    = $p.MaxOutputTokens
             Temperature       = $p.Temperature
+            ReasoningEffort   = $p.ReasoningEffort
             ApiKeyEncrypted   = $p.ApiKeyEncrypted
         }
     }

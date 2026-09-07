@@ -8,6 +8,7 @@ class TranslationProvider {
     [int]      $MaxOutputTokens    # API output-token cap sent to the provider (e.g. Anthropic max_tokens) - distinct from MaxTokensPerBatch
     [int]      $RateLimitRpm       # Requests per minute (0 = unlimited)
     [decimal]  $Temperature
+    [string]   $ReasoningEffort    # OpenRouter reasoning effort; 'auto' leaves the model default unchanged
     [string[]] $SupportedLanguages # Empty means all languages supported; reserved, not currently enforced
 
     TranslationProvider() {
@@ -16,6 +17,7 @@ class TranslationProvider {
         $this.MaxEntriesPerBatch = 40
         $this.MaxOutputTokens    = 8192
         $this.RateLimitRpm       = 60
+        $this.ReasoningEffort    = 'auto'
         $this.SupportedLanguages = @()
     }
 
