@@ -1,5 +1,5 @@
 @{
-    ModuleVersion        = '1.3.0'
+    ModuleVersion        = '1.3.1'
     GUID                 = 'a3f2e1d0-4b5c-6d7e-8f9a-0b1c2d3e4f50'
     Author               = 'Iman Edrisian'
     Copyright            = '(c) 2025 Iman Edrisian. All rights reserved.'
@@ -91,6 +91,14 @@
             # Kept in sync with CHANGELOG.md by hand: PSGallery reads ReleaseNotes,
             # GitHub readers read CHANGELOG.md. Update both together.
             ReleaseNotes = @'
+Version 1.3.1
+
+- Fixed Publish-SubtitleFile being unusable on Windows PowerShell 5.1. Both
+  SubDL upload steps used Invoke-RestMethod -Form, which is PowerShell 6.1+
+  and fails parameter binding on 5.1 - the edition the manifest claims to
+  support. The multipart body is now built by hand and sent as bytes, on both
+  editions
+
 Version 1.3.0
 
 - Added an end-of-run translation summary. Finishing a translation now reports

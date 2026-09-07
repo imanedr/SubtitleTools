@@ -84,13 +84,19 @@ function Invoke-SubDLUpload {
         # ------------------------------------------------------------------
         Write-Verbose "SubDL Step 2: Uploading file '$FilePath'..."
 
+        # Hand-built multipart rather than -Form, which is PowerShell 6.1+ and would
+        # fail parameter binding on Windows PowerShell 5.1 - see
+        # ConvertTo-MultipartFormBody.
+        $upload = ConvertTo-MultipartFormBody `
+            -Fields ([ordered]@{ n_id = $nId }) `
+            -FilePath $FilePath `
+            -FileFieldName 'subtitle'
+
         $step2 = Invoke-RestMethod -Uri "$baseUrl/user/uploadSingleSubtitle" `
             -Method POST `
             -Headers $bearerHeader `
-            -Form @{
-                subtitle = Get-Item -LiteralPath $FilePath
-                n_id     = $nId
-            } `
+            -ContentType $upload.ContentType `
+            -Body $upload.Body `
             -ErrorAction Stop
 
         Write-Verbose "SubDL Step 2 response: ok=$($step2.ok) file_n_id=$($step2.file.file_n_id)"
@@ -130,10 +136,13 @@ function Invoke-SubDLUpload {
         if ($EpisodeTo   -gt 0) { $form3['ee'] = $EpisodeTo.ToString()   }
         if ($SdId)              { $form3['sd_id'] = $SdId                }
 
+        $metadata = ConvertTo-MultipartFormBody -Fields $form3
+
         $step3 = Invoke-RestMethod -Uri "$baseUrl/user/uploadSubtitle" `
             -Method POST `
             -Headers $bearerHeader `
-            -Form $form3 `
+            -ContentType $metadata.ContentType `
+            -Body $metadata.Body `
             -ErrorAction Stop
 
         Write-Verbose "SubDL Step 3 response: status=$($step3.status) message=$($step3.message)"

@@ -1,7 +1,7 @@
 # SubtitleTools — Module Design & Architecture
 
 **Author:** Iman Edrisian  
-**Version:** 1.3.0  
+**Version:** 1.3.1  
 **Target:** PowerShell 5.1+ (Desktop & Core)
 
 ---
@@ -36,6 +36,7 @@ SubtitleTools/
 │   ├── Parsers/                # Invoke-SrtParser, Invoke-AssParser
 │   ├── Writers/                # Write-SrtEntry, Write-AssEntry, Write-AssHeader
 │   ├── Encoding/               # Get-FileEncoding, Remove-ByteOrderMark, ConvertTo-NormalizedText
+│   ├── Sharing/                # Invoke-SubDLUpload, SubDLTokenStore, ConvertTo-MultipartFormBody
 │   ├── Translation/            # Invoke-AnthropicTranslation, Invoke-OpenAITranslation, Invoke-GoogleTranslation,
 │   │                           # Invoke-OpenRouterTranslation, Invoke-TranslationApiRequest (shared HTTP helper),
 │   │                           # Invoke-TranslationProviderAdapter (dispatch), Invoke-TranslationPriming,
@@ -264,7 +265,9 @@ Token storage follows the same DPAPI pattern as translation providers:
 | `Remove-SubDLCredential` | Delete the stored token |
 | `Publish-SubtitleFile` | Upload a subtitle file to SubDL |
 
-**SubDL adapter (`Private/Sharing/Invoke-SubDLUpload.ps1`):** REST endpoint `api.subdl.com/api/v1/subtitles/upload`. Multipart form-data via `System.Net.Http.MultipartFormDataContent` (PS 5.1 compatible). Auth: API token in form field. Language codes resolved via `$script:SubDLLanguages` from `Data/SubDLLanguages.json`.
+**SubDL adapter (`Private/Sharing/Invoke-SubDLUpload.ps1`):** three sequential calls against `api3.subdl.com` — `GET /user/getNId` for a session id, `POST /user/uploadSingleSubtitle` for the file itself, `POST /user/uploadSubtitle` for the metadata. Auth is a bearer token header, not a form field. Language codes resolved via `$script:SubDLLanguages` from `Data/SubDLLanguages.json`.
+
+Both POSTs are `multipart/form-data`, built by `Private/Sharing/ConvertTo-MultipartFormBody.ps1` and sent as a `[byte[]]` through `-Body`. `Invoke-RestMethod -Form` would be the obvious way to do this and is what the code originally used, but it is **PowerShell 6.1+** — on the 5.1 host this module claims to support it fails parameter binding outright, so `Publish-SubtitleFile` could not work there at all. Both editions now take the hand-built path rather than branching on version: an edition-specific branch that the maintainer cannot execute is one that rots untested. The body is accumulated in a `MemoryStream`, not concatenated as a string, so a subtitle's own bytes — a BOM, UTF-16, a stray `0x00`, a bare `LF` that must not become `CRLF` — reach the server unaltered.
 
 ---
 

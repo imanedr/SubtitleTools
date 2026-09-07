@@ -103,7 +103,7 @@ Install-Module -Name SubtitleTools -Scope CurrentUser
 ```powershell
 # Copy the module files into a version-named folder on your module path
 Copy-Item -Path '.\SubtitleTools\*' `
-    -Destination "$([Environment]::GetFolderPath('MyDocuments'))\PowerShell\Modules\SubtitleTools\1.3.0" `
+    -Destination "$([Environment]::GetFolderPath('MyDocuments'))\PowerShell\Modules\SubtitleTools\1.3.1" `
     -Recurse
 ```
 

@@ -5,6 +5,31 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.3.1] - 2026-09-06
+
+### Fixed
+
+- **`Publish-SubtitleFile` could not run on Windows PowerShell 5.1.** Both SubDL
+  upload steps passed `-Form` to `Invoke-RestMethod`, a parameter added in
+  PowerShell 6.1. On 5.1 — the edition `PowerShellVersion = '5.1'` and
+  `CompatiblePSEditions = @('Desktop','Core')` promise — the call failed
+  parameter binding before any request was made, so publishing was broken
+  outright rather than degraded. The `multipart/form-data` body is now
+  assembled by `ConvertTo-MultipartFormBody` and sent as a `[byte[]]` through
+  `-Body`, which both editions transmit verbatim.
+
+  Both editions take the same hand-built path rather than branching on version:
+  a branch that only ever executes on an edition the maintainer cannot run is a
+  branch that rots untested. The body is accumulated in a `MemoryStream` rather
+  than concatenated as a string, so a subtitle's own bytes — a BOM, UTF-16, a
+  lone `0x00`, a bare `LF` that must not be rewritten to `CRLF` — reach the
+  server unaltered. Verified against the wire format by byte-exact tests; SubDL
+  offers no test endpoint, so this is not verified against their live API.
+- Corrected `DESIGN.md`'s description of the SubDL adapter, which named the
+  wrong endpoint, described auth as a form field rather than a bearer header,
+  and claimed a `MultipartFormDataContent` implementation that was "PS 5.1
+  compatible" — the code it described was neither.
+
 ## [1.3.0] - 2026-09-06
 
 ### Added
