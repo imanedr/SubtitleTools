@@ -208,25 +208,31 @@
             $primingCallback = $null
             if (-not $NoStream) {
                 $primingState = @{
-                    LastUpdate = [datetime]::MinValue
-                    Fields     = [System.Collections.Generic.List[string]]::new()
+                    LastUpdate         = [datetime]::MinValue
+                    Fields             = [System.Collections.Generic.List[string]]::new()
+                    StreamingConfirmed = $false
                 }
                 $primingCallback = {
                     param($accumulated, $counters)
 
                     $now = [datetime]::UtcNow
-                    if (($now - $primingState.LastUpdate).TotalMilliseconds -lt 300) { return }
+                    if (($now - $primingState.LastUpdate).TotalMilliseconds -lt 500) { return }
                     $primingState.LastUpdate = $now
+
+                    if (-not $primingState.StreamingConfirmed) {
+                        $primingState.StreamingConfirmed = $true
+                        Write-Host "`r  Priming: Streaming connected, waiting for response..." -NoNewline
+                    }
+
+                    $elapsed = [int]([datetime]::UtcNow - $primingStart).TotalSeconds
 
                     if ($counters.Reasoning) {
                         $reasonChars = $counters.ReasoningLength
-                        $elapsed = [int]([datetime]::UtcNow - $primingStart).TotalSeconds
+                        Write-Host "`r  Priming: Thinking... $($reasonChars) reasoning chars | $($elapsed)s elapsed" -NoNewline
                         Write-Progress -Id 3 -ParentId 2 -Activity 'Priming translation context' `
                             -Status "Thinking... $($reasonChars) reasoning chars | $($elapsed)s elapsed" `
-                            -PercentComplete -1
+                            -PercentComplete 0
                     } elseif ($accumulated) {
-                        # Detect labeled fields as they appear in the stream so the user
-                        # sees the analysis building up in real time.
                         foreach ($line in ($accumulated -split "`n")) {
                             if ($line -match '^([A-Z_]+):\s*') {
                                 $field = $Matches[1]
@@ -240,8 +246,9 @@
                         } else {
                             "Writing: $($accumulated.Length) chars"
                         }
+                        Write-Host "`r  Priming: $fieldList | $($elapsed)s elapsed" -NoNewline
                         Write-Progress -Id 3 -ParentId 2 -Activity 'Priming translation context' `
-                            -Status $fieldList -PercentComplete -1
+                            -Status $fieldList -PercentComplete 0
                     }
                 }.GetNewClosure()
             }
@@ -249,6 +256,8 @@
             Write-Progress -Id 3 -ParentId 2 -Activity 'Priming translation context' `
                 -Status "Sending $($PrimingSampleSize) sample entries for analysis..." `
                 -PercentComplete 0
+
+            Write-Host '  Priming: Sending samples for analysis...' -NoNewline
 
             $primedCtx = Invoke-TranslationPriming `
                 -InputObject    $InputObject `
@@ -258,6 +267,8 @@
                 -TargetLanguage $TargetLanguage `
                 -SampleSize     $PrimingSampleSize `
                 -StreamCallback $primingCallback
+
+            Write-Host ''  # final newline after the \r-updated status line
 
             $primingElapsed = [int]([datetime]::UtcNow - $primingStart).TotalSeconds
             if ($primingElapsed -gt 90) {
