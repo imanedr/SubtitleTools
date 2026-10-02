@@ -1,4 +1,4 @@
-function New-SubtitleEntryCopy {
+﻿function New-SubtitleEntryCopy {
     <#
     .SYNOPSIS
         Creates a properly-typed copy of a subtitle entry with new translated lines.

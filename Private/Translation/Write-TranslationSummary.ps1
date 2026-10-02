@@ -124,6 +124,18 @@ function Write-TranslationSummary {
     & $row 'Text' ("{0} {1} {2} chars" -f
         ('{0:N0}' -f $Summary.SourceCharacters), $arrow, ('{0:N0}' -f $Summary.OutputCharacters))
 
+    # $null means the check was skipped (-SkipValidation), not that it passed.
+    if ($null -ne $Summary.ValidationErrors) {
+        if ($Summary.ValidationErrors -eq 0 -and $Summary.ValidationWarnings -eq 0) {
+            & $row 'Check' 'passed (count, timestamps, text)' 'Green'
+        } else {
+            $checkColor = if ($Summary.ValidationErrors -gt 0) { 'Red' } else { 'Yellow' }
+            & $row 'Check' ("{0} {1} {2}" -f
+                (& $plural $Summary.ValidationErrors 'error' 'errors'), $sep,
+                (& $plural $Summary.ValidationWarnings 'warning' 'warnings')) $checkColor
+        }
+    }
+
     Write-Host "  $rule" -ForegroundColor DarkGray
     Write-Host '  Full details: $result.TranslationSummary' -ForegroundColor DarkGray
     Write-Host ''

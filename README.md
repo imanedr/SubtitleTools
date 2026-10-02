@@ -606,6 +606,10 @@ Find-SubtitleFile -Path 'D:\Anime' -Format ASS -Pattern '*english*' -Recurse
 # Compare original and translated files side by side
 Compare-SubtitleFile -Reference $original -Difference $translated | Format-Table
 
+# Check a translation: entry count, unchanged timestamps, empty/untranslated text
+# (runs automatically after Invoke-SubtitleTranslation; -SkipValidation turns it off)
+Test-SubtitleTranslation -Source $original -Translated $translated
+
 # Deduplicate, sort, trim whitespace
 Import-SubtitleFile 'messy.srt' | Optimize-SubtitleFile | Export-SubtitleFile -Path 'clean.srt'
 ```
@@ -617,7 +621,7 @@ Import-SubtitleFile 'messy.srt' | Optimize-SubtitleFile | Export-SubtitleFile -P
 | Category | Functions |
 |----------|-----------|
 | **Core I/O** | `Import-SubtitleFile` · `Export-SubtitleFile` · `ConvertFrom-SrtFile` · `ConvertTo-SrtFile` · `ConvertFrom-AssFile` · `ConvertTo-AssFile` |
-| **Validation** | `Test-SrtFile` · `Test-AssFile` · `Test-SubtitleTimestamps` · `Test-SubtitleOverlap` |
+| **Validation** | `Test-SrtFile` · `Test-AssFile` · `Test-SubtitleTimestamps` · `Test-SubtitleOverlap` · `Test-SubtitleTranslation` |
 | **Repair** | `Repair-SrtFile` · `Repair-AssFile` · `Repair-SubtitleEncoding` · `Repair-SubtitleOverlap` · `Repair-SubtitleNumbering` |
 | **Timestamps** | `Add-SubtitleOffset` · `Set-SubtitleOffset` · `Get-SubtitleDuration` · `Set-SubtitleDuration` · `Invoke-SubtitleStretch` · `Merge-SubtitleFile` · `Split-SubtitleFile` |
 | **ASS Advanced** | `Get-AssStyle` · `Set-AssStyle` · `New-AssStyle` · `Remove-AssStyle` · `Remove-AssOverrideTag` · `Convert-AssToPlainText` · `Convert-AssToSrt` · `Convert-SrtToAss` |

@@ -33,7 +33,7 @@
 
         # Must have a Header
         if (-not $InputObject.Header) {
-            $result.AddError(0, 'Structure', 'Missing [Script Info] section â€” Header is null.')
+            $result.AddError(0, 'Structure', 'Missing [Script Info] section — Header is null.')
             return $result
         }
 

@@ -1,4 +1,4 @@
-class SubtitleEntry {
+﻿class SubtitleEntry {
     [int]       $Index       # 1-based sequence position after parsing
     [TimeSpan]  $Start       # Parsed start time (canonical internal unit)
     [TimeSpan]  $End         # Parsed end time

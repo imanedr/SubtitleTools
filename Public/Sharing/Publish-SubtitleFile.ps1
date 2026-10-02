@@ -1,4 +1,4 @@
-function Publish-SubtitleFile {
+﻿function Publish-SubtitleFile {
     <#
     .SYNOPSIS
         Uploads a subtitle file to SubDL.

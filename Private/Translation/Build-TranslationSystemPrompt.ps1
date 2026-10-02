@@ -1,4 +1,4 @@
-function Build-TranslationSystemPrompt {
+﻿function Build-TranslationSystemPrompt {
     <#
     .SYNOPSIS
         Builds a rich, content-aware system prompt for subtitle translation.

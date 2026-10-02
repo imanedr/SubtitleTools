@@ -12,7 +12,7 @@
         is used), the function first sends a sample of entries to the AI for content
         analysis (type, tone, register, domain terms, speaker patterns). This context
         is then used to build a rich, content-aware system prompt for every subsequent
-        batch. Priming runs once per session â€” reuse the same session across episodes
+        batch. Priming runs once per session — reuse the same session across episodes
         of a series to avoid repeated API calls.
 
         API keys are stored encrypted at rest via Windows DPAPI (CurrentUser scope) -
@@ -27,7 +27,7 @@
     .PARAMETER ProviderName
         The AI provider to use: OpenAI, Anthropic, Google, or OpenRouter.
     .PARAMETER SourceLanguage
-        BCP-47 language code of the source (e.g., 'en'). Optional â€” providers can auto-detect.
+        BCP-47 language code of the source (e.g., 'en'). Optional — providers can auto-detect.
     .PARAMETER TargetLanguage
         BCP-47 language code of the target language (e.g., 'fa', 'fr', 'zh').
     .PARAMETER Session
@@ -69,6 +69,14 @@
         entry/cache/unresolved counts, batches, API calls, retries, token usage, elapsed
         time). The same data is always available on the returned object's
         .TranslationSummary property regardless of this switch.
+    .PARAMETER SkipValidation
+        Skip the post-translation check. By default, once translation finishes the
+        result is compared against the source with Test-SubtitleTranslation: entry
+        count, unchanged Start/End times, valid timestamps, empty or untranslated
+        entries, and leftover batch markers. When -OutputPath is given, the check
+        runs against the file re-imported from disk, so it also catches anything
+        lost in writing. The result is attached as .TranslationValidation, counted
+        in the summary, and any problems are raised on the warning stream.
     .PARAMETER ProgressParentId
         Id of a caller's Write-Progress bar to nest this function's progress under
         (via -ParentId). This function's own bar uses -Id 2 and the priming phase
@@ -83,7 +91,7 @@
     .EXAMPLE
         $session = New-TranslationSession -ProviderName OpenAI -GlossaryPath './glossary.json'
         Import-SubtitleFile 'ep01.srt' | Invoke-SubtitleTranslation -TargetLanguage 'fa' -Session $session -PrimeWithContext
-        # Second episode reuses ContentContext from $session â€” no extra API call
+        # Second episode reuses ContentContext from $session — no extra API call
         Import-SubtitleFile 'ep02.srt' | Invoke-SubtitleTranslation -TargetLanguage 'fa' -Session $session
     .EXAMPLE
         Invoke-SubtitleTranslation -Path 'anime.ass' -ProviderName Anthropic -TargetLanguage 'en' `
@@ -138,6 +146,8 @@
         [switch] $NoStream,
 
         [switch] $NoSummary,
+
+        [switch] $SkipValidation,
 
         [int] $ProgressParentId
     )
@@ -588,6 +598,10 @@
             for ($r = 0; $r -lt $currentBatch.Count; $r++) {
                 $srcEntry = $currentBatch[$r]
                 $newLines = ($batchOutcome.Results[$r] -replace '<NL>', "`n") -split "`n"
+                # A blank line inside an SRT block ends the block, so one stray
+                # '<NL><NL>' from the model would split the entry in two on disk.
+                $nonBlank = @($newLines | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+                if ($nonBlank.Count -gt 0) { $newLines = $nonBlank }
                 $newEntry = New-SubtitleEntryCopy -Source $srcEntry -Lines $newLines
                 $translatedEntries.Add($newEntry)
             }
@@ -614,6 +628,23 @@
         & $saveCheckpoint $Session
 
         $translated.Entries = $translatedEntries.ToArray()
+
+        $written = $false
+        if ($OutputPath -and $PSCmdlet.ShouldProcess($OutputPath, 'Save translated subtitle')) {
+            Export-SubtitleFile -InputObject $translated -Path $OutputPath
+            $written = $true
+        }
+
+        # --- Post-translation check ---
+        # Translation must change the text and nothing else. When a file was written,
+        # check the copy re-read from disk rather than the in-memory object: that is
+        # what a player will load, and it catches anything lost in serialization.
+        $validation = $null
+        if (-not $SkipValidation -and -not $WhatIfPreference) {
+            $checkTarget = if ($written) { Import-SubtitleFile -Path $OutputPath } else { $translated }
+            $validation  = Test-SubtitleTranslation -Source $InputObject -Translated $checkTarget
+            $translated | Add-Member -NotePropertyName TranslationValidation -NotePropertyValue $validation -Force
+        }
 
         # --- Run summary ---
         # Everything the run learned that is not in the subtitle itself: what was
@@ -662,6 +693,9 @@
             EntriesPerMinute  = $(if ($runElapsed.TotalSeconds -gt 0) { [int]($doneEntries / $runElapsed.TotalSeconds * 60) } else { 0 })
             StartedAt         = $overallStart.ToLocalTime()
             CompletedAt       = [datetime]::UtcNow.ToLocalTime()
+            # $null when the check was skipped, so "not run" never reads as "passed".
+            ValidationErrors   = $(if ($validation) { $validation.ErrorCount }   else { $null })
+            ValidationWarnings = $(if ($validation) { $validation.WarningCount } else { $null })
         }
 
         $translated | Add-Member -NotePropertyName TranslationSummary -NotePropertyValue $summary -Force
@@ -671,10 +705,6 @@
         $cacheSuffix  = if ($totalCacheHits -gt 0) { " Cache hits: $totalCacheHits." } else { '' }
         Write-SubtitleLog -Message "Translation complete. $($translated.Entries.Count) entries in $totalBatches batch(es), $totalApiCalls API call(s), $([int]$runElapsed.TotalSeconds)s. Provider: $($provider.Name) / $($provider.Model). Tokens: $tokenSummary.$retrySuffix$cacheSuffix" `
             -LogPath $LogPath
-
-        if ($OutputPath -and $PSCmdlet.ShouldProcess($OutputPath, 'Save translated subtitle')) {
-            Export-SubtitleFile -InputObject $translated -Path $OutputPath
-        }
 
         # Under -WhatIf no batch actually ran, so a summary of the run would be a
         # summary of nothing.
@@ -690,6 +720,15 @@
             Write-Warning ("{0} of {1} entries could not be translated and kept their source text. " -f $totalUnresolved, $totalEntries +
                 "This usually means the model's output was cut short. Try a lower -MaxEntriesPerBatch or a higher -MaxOutputTokens: " +
                 "Set-TranslationProvider -Name $($provider.Name) -MaxEntriesPerBatch 20")
+        }
+
+        if ($validation -and ($validation.ErrorCount -gt 0 -or $validation.WarningCount -gt 0)) {
+            $shown = @($validation.Errors) + @($validation.Warnings) | Select-Object -First 5
+            $lines = ($shown | ForEach-Object { "  $_" }) -join [Environment]::NewLine
+            $more  = $validation.ErrorCount + $validation.WarningCount - $shown.Count
+            if ($more -gt 0) { $lines += "$([Environment]::NewLine)  ...and $more more." }
+            Write-Warning ("Post-translation check: {0} error(s), {1} warning(s). Full list: `$result.TranslationValidation{2}{3}" -f
+                $validation.ErrorCount, $validation.WarningCount, [Environment]::NewLine, $lines)
         }
 
         return $translated

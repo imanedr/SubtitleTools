@@ -1,4 +1,4 @@
-function Write-SubtitleLog {
+﻿function Write-SubtitleLog {
     <#
     .SYNOPSIS
         Writes a structured log message — to console and optionally to a file.

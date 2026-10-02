@@ -57,7 +57,7 @@
                 if ($currentLine) { $wrappedLines.Add($currentLine) }
             }
 
-            # Enforce MaxLines â€” if we have more, join excess back onto last allowed line
+            # Enforce MaxLines — if we have more, join excess back onto last allowed line
             if ($wrappedLines.Count -gt $MaxLines) {
                 $kept  = [System.Collections.Generic.List[string]]::new($wrappedLines.GetRange(0, $MaxLines - 1))
                 $extra = $wrappedLines.GetRange($MaxLines - 1, $wrappedLines.Count - ($MaxLines - 1))

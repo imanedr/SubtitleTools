@@ -1,4 +1,4 @@
-@{
+﻿@{
     ModuleVersion        = '1.3.2'
     GUID                 = 'a3f2e1d0-4b5c-6d7e-8f9a-0b1c2d3e4f50'
     Author               = 'Iman Edrisian'
@@ -24,6 +24,7 @@
         'Test-AssFile'
         'Test-SubtitleTimestamps'
         'Test-SubtitleOverlap'
+        'Test-SubtitleTranslation'
 
         # Repair
         'Repair-SrtFile'

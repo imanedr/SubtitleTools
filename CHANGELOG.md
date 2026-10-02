@@ -5,6 +5,34 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Post-translation check.** `Invoke-SubtitleTranslation` now compares its
+  result against the source with the new `Test-SubtitleTranslation`, built on
+  `Compare-SubtitleFile` and `Test-SubtitleTimestamps`. Errors: entry count
+  mismatch, changed Start/End times, invalid timestamps, empty translations.
+  Warnings: text identical to the source, leftover `<NL>` / `N|` batch markers,
+  parse warnings, lost ASS override tags. With `-OutputPath` the written file is
+  re-imported and checked, so serialization losses are caught too. The result is
+  attached as `.TranslationValidation`, shown as a `Check` row in the summary,
+  and raised as a warning when anything is found. `-SkipValidation` opts out.
+
+### Fixed
+
+- **Blank lines in a translation split SRT entries.** A model reply containing
+  `<NL><NL>` wrote an empty line inside an SRT block, which ends the block, so
+  the entry was split in two on disk. Blank lines are now dropped.
+- **`.ssa` files could not be exported.** `Export-SubtitleFile` threw
+  `Unsupported format: 'SSA'` for any file imported from `.ssa`, including
+  `Invoke-SubtitleTranslation -OutputPath`. SSA now goes through the ASS writer.
+- **Garbled text on Windows PowerShell 5.1.** Fifteen source files containing
+  non-ASCII characters had no UTF-8 BOM, so 5.1 decoded them as ANSI — including
+  the translation system prompt and priming prompt sent to the model (`—`
+  arrived as `â€”`). Those files now carry a BOM, and the existing mojibake in
+  comments and messages has been repaired.
+
 ## [1.3.2] - 2026-09-07
 
 ### Added

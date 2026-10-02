@@ -1,4 +1,4 @@
-function Get-FileEncoding {
+﻿function Get-FileEncoding {
     <#
     .SYNOPSIS
         Detects the encoding of a file by inspecting BOM bytes and content heuristics.

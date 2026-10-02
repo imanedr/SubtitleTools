@@ -1,4 +1,4 @@
-function Add-TranslationGlossaryEntry {
+﻿function Add-TranslationGlossaryEntry {
     <#
     .SYNOPSIS
         Adds or updates a term in a translation glossary file.

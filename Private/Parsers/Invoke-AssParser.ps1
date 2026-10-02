@@ -121,7 +121,7 @@
                         $colMap[$eventColumns[$i]] = if ($i -lt $parts.Count) { $parts[$i].Trim() } else { '' }
                     }
 
-                    # Text column may have trailing parts if we had extra commas â€” join them back
+                    # Text column may have trailing parts if we had extra commas — join them back
                     $textColIndex = $eventColumns.IndexOf('Text')
                     if ($textColIndex -ge 0 -and $parts.Count -gt $textColIndex) {
                         $colMap['Text'] = ($parts[$textColIndex..($parts.Count - 1)]) -join ','

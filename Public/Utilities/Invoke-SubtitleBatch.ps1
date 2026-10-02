@@ -1,4 +1,4 @@
-function Invoke-SubtitleBatch {
+﻿function Invoke-SubtitleBatch {
     <#
     .SYNOPSIS
         Applies a subtitle operation to multiple files in a directory.

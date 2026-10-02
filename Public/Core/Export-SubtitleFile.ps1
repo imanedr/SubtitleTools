@@ -44,7 +44,9 @@ function Export-SubtitleFile {
 
         $content = switch ($outputFormat) {
             'SRT' { ConvertTo-SrtFile -InputObject $InputObject }
-            'ASS' { ConvertTo-AssFile -InputObject $InputObject }
+            # SSA files are parsed into the same ASS object model, so they are written
+            # back through the ASS serializer rather than rejected.
+            { $_ -in 'ASS', 'SSA' } { ConvertTo-AssFile -InputObject $InputObject }
             default { throw "Unsupported format: '$outputFormat'" }
         }
 

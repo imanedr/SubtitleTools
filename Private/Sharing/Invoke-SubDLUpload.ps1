@@ -1,4 +1,4 @@
-function Invoke-SubDLUpload {
+﻿function Invoke-SubDLUpload {
     <#
     .SYNOPSIS
         Uploads a subtitle file to SubDL via their three-step Upload API.

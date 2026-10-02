@@ -1367,3 +1367,117 @@ data: {"candidates":[{"content":{"parts":[{"text":"\n"}]},"finishReason":"STOP"}
         }
     }
 }
+
+Describe 'Post-translation validation' {
+    BeforeAll {
+        # Source text, rebuilt inside InModuleScope - see the NOTE at the top of file.
+        $ValidateHelper = {
+            param($outputPath, [switch] $SkipValidation)
+
+            $provider                    = [TranslationProvider]::new()
+            $provider.Name               = 'OpenRouter'
+            $provider.Model              = 'google/gemini-3.8-flash'
+            $provider.BaseUrl            = 'https://openrouter.test/api/v1'
+            $provider.RateLimitRpm       = 0
+            $provider.ApiKeyEncrypted    = 'placeholder-since-Unprotect-ApiKey-is-mocked'
+
+            $session = @{ Provider = $provider; Glossary = @{}; Cache = @{}; CheckpointPath = $null; ContentContext = $null }
+
+            $file         = [SubtitleFile]::new()
+            $file.Format  = 'SRT'
+            $file.Entries = @(foreach ($i in 1..3) {
+                $e = [SrtEntry]::new()
+                $e.Index = $i
+                $e.Start = [TimeSpan]::FromMilliseconds($i * 1000 + 123)
+                $e.End   = [TimeSpan]::FromMilliseconds($i * 1000 + 987)
+                $e.Lines = @("Source line $i")
+                $e
+            })
+
+            $params = @{ InputObject = $file; TargetLanguage = 'fa'; Session = $session; NoStream = $true; NoSummary = $true }
+            if ($outputPath)     { $params['OutputPath'] = $outputPath }
+            if ($SkipValidation) { $params['SkipValidation'] = $true }
+            Invoke-SubtitleTranslation @params
+        }.ToString()
+    }
+
+    BeforeEach {
+        Mock -ModuleName SubtitleTools -CommandName Start-Sleep      -MockWith { }
+        Mock -ModuleName SubtitleTools -CommandName Unprotect-ApiKey -MockWith { 'fake-plain-key' }
+    }
+
+    It 'Validates the file re-read from disk and reports it clean' {
+        # The model puts a blank line inside entry 2 ('<NL><NL>'). Written verbatim,
+        # that blank line would end the SRT block and split entry 2 in two on disk.
+        Mock -ModuleName SubtitleTools -CommandName Invoke-RestMethod -MockWith {
+            [PSCustomObject]@{
+                choices = @([PSCustomObject]@{
+                    message       = [PSCustomObject]@{ content = "1|XLAT-1`n2|XLAT-2a<NL><NL>XLAT-2b`n3|XLAT-3" }
+                    finish_reason = 'stop'
+                })
+                usage = [PSCustomObject]@{ prompt_tokens = 10; completion_tokens = 5 }
+                model = 'google/gemini-3.8-flash'
+            }
+        }
+
+        $out = Join-Path $TestDrive 'out.fa.srt'
+        InModuleScope SubtitleTools -Parameters @{ helper = $ValidateHelper; out = $out } {
+            param($helper, $out)
+            $result = & ([scriptblock]::Create($helper)) $out
+
+            $v = $result.TranslationValidation
+            $v | Should -Not -BeNullOrEmpty
+            $v.FilePath     | Should -Be (Resolve-Path $out).Path
+            $v.IsValid      | Should -BeTrue
+            $v.WarningCount | Should -Be 0
+            $result.TranslationSummary.ValidationErrors   | Should -Be 0
+            $result.TranslationSummary.ValidationWarnings | Should -Be 0
+
+            $result.Entries[1].Lines | Should -Be @('XLAT-2a', 'XLAT-2b')
+        }
+    }
+
+    It 'Flags untranslated fallback entries and warns' {
+        Mock -ModuleName SubtitleTools -CommandName Invoke-RestMethod -MockWith {
+            [PSCustomObject]@{
+                choices = @([PSCustomObject]@{
+                    message       = [PSCustomObject]@{ content = 'I cannot help with that.' }
+                    finish_reason = 'stop'
+                })
+                usage = [PSCustomObject]@{ prompt_tokens = 10; completion_tokens = 5 }
+                model = 'google/gemini-3.8-flash'
+            }
+        }
+
+        InModuleScope SubtitleTools -Parameters @{ helper = $ValidateHelper } {
+            param($helper)
+            $output   = & ([scriptblock]::Create($helper)) $null 3>&1
+            $warnings = @($output | Where-Object { $_ -is [System.Management.Automation.WarningRecord] })
+            $result   = $output | Where-Object { $_ -is [SubtitleFile] }
+
+            $result.TranslationValidation.IsValid | Should -BeTrue
+            @($result.TranslationValidation.Warnings | Where-Object Field -eq 'Untranslated').Count | Should -Be 3
+            ($warnings -join "`n") | Should -Match 'Post-translation check: 0 error\(s\), 3 warning\(s\)'
+        }
+    }
+
+    It 'Skips the check with -SkipValidation' {
+        Mock -ModuleName SubtitleTools -CommandName Invoke-RestMethod -MockWith {
+            [PSCustomObject]@{
+                choices = @([PSCustomObject]@{
+                    message       = [PSCustomObject]@{ content = "1|A`n2|B`n3|C" }
+                    finish_reason = 'stop'
+                })
+                usage = [PSCustomObject]@{ prompt_tokens = 10; completion_tokens = 5 }
+                model = 'google/gemini-3.8-flash'
+            }
+        }
+
+        InModuleScope SubtitleTools -Parameters @{ helper = $ValidateHelper } {
+            param($helper)
+            $result = & ([scriptblock]::Create($helper)) $null -SkipValidation
+            $result.PSObject.Properties['TranslationValidation'] | Should -BeNullOrEmpty
+            $result.TranslationSummary.ValidationErrors | Should -BeNullOrEmpty
+        }
+    }
+}

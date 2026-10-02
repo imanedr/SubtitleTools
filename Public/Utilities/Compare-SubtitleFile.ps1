@@ -1,4 +1,4 @@
-function Compare-SubtitleFile {
+﻿function Compare-SubtitleFile {
     <#
     .SYNOPSIS
         Compares two SubtitleFile objects entry-by-entry and reports differences.

@@ -67,12 +67,15 @@ function Invoke-BackTranslation {
     # -NoSummary: the back-translation is an internal verification pass, not the
     # caller's deliverable. Printing "Translation complete" here would describe work
     # the caller did not ask for, above the similarity report that they did.
+    # -SkipValidation for the same reason: this report is the verification, and
+    # warnings about the throwaway back-translation would only be noise.
     $backTranslated = Invoke-SubtitleTranslation `
         -InputObject $TranslatedFile `
         -TargetLanguage $BackLanguage `
         -Session $Session `
         -ProgressParentId 1 `
-        -NoSummary
+        -NoSummary `
+        -SkipValidation
 
     Write-Progress -Id 1 -Activity 'Back-translation verification' -Status 'Comparing...' -PercentComplete 80
 

@@ -1,4 +1,4 @@
-function Invoke-TranslationPriming {
+﻿function Invoke-TranslationPriming {
     <#
     .SYNOPSIS
         Analyzes a subtitle file sample and returns structured content context for translation.
